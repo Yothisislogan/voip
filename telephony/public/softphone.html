@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WIT Connect — Softphone</title>
+<!-- Twilio Voice JS SDK v2 (validate latest release at sdk.twilio.com) -->
+<script src="https://sdk.twilio.com/js/voice/releases/2.12.3/twilio.min.js"></script>
+<style>
+  :root{
+    --blue:#00AEEF; --deep:#007EAE; --ink:#06121D; --paper:#F4F8FB;
+    --line:#E3EBF1; --mute:#6B7280; --green:#33D17A; --red:#FF6868;
+  }
+  *{box-sizing:border-box;font-family:'IBM Plex Sans',-apple-system,system-ui,sans-serif}
+  body{margin:0;background:var(--paper);display:flex;justify-content:center;padding:32px 16px;color:var(--ink)}
+  .phone{width:340px;background:#fff;border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:0 18px 40px rgba(6,18,29,.08)}
+  .top{background:linear-gradient(135deg,var(--ink),#0E2433);color:#fff;padding:18px 20px}
+  .brand{display:flex;align-items:center;gap:10px}
+  .logo{width:32px;height:32px;border-radius:9px;background:var(--blue);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px}
+  .brand small{display:block;font-size:10px;letter-spacing:.06em;color:#7E94A1}
+  .status{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:#A9BAC4}
+  .dot{width:9px;height:9px;border-radius:99px;background:var(--mute)}
+  .dot.on{background:var(--green)}
+  .body{padding:20px}
+  .display{background:var(--paper);border-radius:12px;padding:14px;font-family:'IBM Plex Mono',monospace;font-size:20px;text-align:center;min-height:30px;letter-spacing:.04em}
+  .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+  .key{padding:15px 0;border:none;border-radius:12px;background:var(--paper);font-size:18px;font-weight:600;cursor:pointer;font-family:'IBM Plex Mono',monospace}
+  .key:active{transform:scale(.96)}
+  .actions{display:flex;gap:10px;margin-top:16px}
+  .btn{flex:1;padding:14px 0;border:none;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer;color:#fff;display:flex;align-items:center;justify-content:center;gap:8px}
+  .call{background:var(--green)} .hang{background:var(--red)} .ghost{background:var(--paper);color:var(--ink)}
+  .incoming{margin-top:16px;padding:14px;border-radius:13px;background:#E2F4FC;border:1px solid #BCE4F5;text-align:center;display:none}
+  .incoming.show{display:block}
+  .log{margin-top:16px;font-size:11.5px;color:var(--mute);min-height:16px;text-align:center}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="top">
+      <div class="brand">
+        <div class="logo">W</div>
+        <div><b style="font-size:16px">WIT Connect</b><small>WE INSURE THINGS</small></div>
+      </div>
+      <div class="status"><span class="dot" id="dot"></span><span id="state">Connecting…</span></div>
+    </div>
+    <div class="body">
+      <div class="display" id="display">+1</div>
+      <div class="pad" id="pad"></div>
+
+      <div class="incoming" id="incoming">
+        <div style="font-weight:700;font-size:14px" id="callerId">Incoming call</div>
+        <div class="actions">
+          <button class="btn call" id="accept">Accept</button>
+          <button class="btn hang" id="reject">Decline</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn call" id="callBtn">Call</button>
+        <button class="btn hang hidden" id="hangBtn">End</button>
+        <button class="btn ghost hidden" id="muteBtn">Mute</button>
+      </div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const display = $("display"), log = (m) => ($("log").textContent = m);
+const params = new URLSearchParams(location.search);
+const identity = params.get("identity") || "";
+
+let device, activeCall = null, muted = false;
+
+// Build the dial pad
+"123456789*0#".split("").forEach((d) => {
+  const b = document.createElement("button");
+  b.className = "key"; b.textContent = d;
+  b.onclick = () => {
+    if (activeCall) { activeCall.sendDigits(d); return; }
+    display.textContent = (display.textContent === "+1" ? "+1" : display.textContent) + d;
+  };
+  $("pad").appendChild(b);
+});
+
+function setState(text, online) {
+  $("state").textContent = text;
+  $("dot").classList.toggle("on", !!online);
+}
+function inCallUI(on) {
+  $("callBtn").classList.toggle("hidden", on);
+  $("hangBtn").classList.toggle("hidden", !on);
+  $("muteBtn").classList.toggle("hidden", !on);
+}
+
+async function init() {
+  try {
+    const res = await fetch(`/token${identity ? "?identity=" + encodeURIComponent(identity) : ""}`);
+    const { token, identity: id } = await res.json();
+    device = new Twilio.Device(token, { codecPreferences: ["opus", "pcmu"] });
+
+    device.on("registered", () => setState(`Ready · ${id}`, true));
+    device.on("error", (e) => { setState("Device error", false); log(e.message); });
+    device.on("tokenWillExpire", async () => {
+      try {
+        const r = await fetch(`/token?identity=${encodeURIComponent(id)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        device.updateToken((await r.json()).token);
+      } catch (err) {
+        setState("Token refresh failed — reload to reconnect", false);
+      }
+    });
+
+    device.on("incoming", (call) => {
+      activeCall = call;
+      $("callerId").textContent = "Incoming · " + (call.parameters.From || "unknown");
+      $("incoming").classList.add("show");
+      call.on("disconnect", endCleanup);
+      call.on("cancel", endCleanup);
+    });
+
+    await device.register();
+  } catch (err) {
+    setState("Could not connect", false);
+    log("Check that the server is running and Twilio env vars are set.");
+  }
+}
+
+function endCleanup() {
+  activeCall = null; muted = false;
+  inCallUI(false);
+  $("incoming").classList.remove("show");
+  $("muteBtn").textContent = "Mute";
+  log("Call ended");
+}
+
+$("callBtn").onclick = async () => {
+  const to = display.textContent.trim();
+  if (!device || to.length < 4) return;
+  log("Dialing " + to + "…");
+  activeCall = await device.connect({ params: { To: to } });
+  activeCall.on("accept", () => { inCallUI(true); log("Connected"); });
+  activeCall.on("disconnect", endCleanup);
+};
+
+$("hangBtn").onclick = () => activeCall && activeCall.disconnect();
+$("muteBtn").onclick = () => {
+  if (!activeCall) return;
+  muted = !muted; activeCall.mute(muted);
+  $("muteBtn").textContent = muted ? "Unmute" : "Mute";
+};
+$("accept").onclick = () => {
+  if (!activeCall) return;
+  activeCall.accept(); inCallUI(true);
+  $("incoming").classList.remove("show");
+};
+$("reject").onclick = () => { activeCall && activeCall.reject(); endCleanup(); };
+
+init();
+</script>
+</body>
+</html>
