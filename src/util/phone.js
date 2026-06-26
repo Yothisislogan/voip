@@ -1,5 +1,5 @@
 /**
- * Phone-number helpers. Twilio gives us E.164 (`+14805550100`), but SuiteCRM
+ * Phone-number helpers. Twilio gives us E.164 (`+14805550100`), but CRM
  * records may store numbers in any human format (`(480) 555-0100`, `480-555-0100`).
  * We normalize for display and generate a few "contains" variants for lookup.
  */

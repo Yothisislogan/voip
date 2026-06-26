@@ -30,7 +30,7 @@ de-scope card data via **Twilio `<Pay>`**.
   three regimes at once, so we build them regardless. **PCI** also applies
   (customers read card data aloud on calls).
 - **Today:** Node/Twilio app on a **Hetzner** server; Claude (direct API) for
-  coaching + recap; Twilio built-in real-time transcription; SuiteCRM planned.
+  coaching + recap; Twilio built-in real-time transcription; ERPNext planned.
 
 ### The blocking conflict (why we're moving)
 
@@ -70,9 +70,9 @@ time. Build these regardless of whether a formal HIPAA program is pursued.
 | # | Control | What it means here |
 |---|---|---|
 | 1 | **Data minimization** | Don't capture what you don't need: Twilio `<Pay>` for cards (never recorded), pause transcription during sensitive segments, redact PII/PHI at the STT layer before text is stored or sent to the LLM. |
-| 2 | **Encryption everywhere** | TLS 1.2+ in transit; AES-256 at rest via AWS KMS (RDS, S3, EBS); SuiteCRM DB on encrypted RDS. |
-| 3 | **Least-privilege access + MFA** | IAM least-privilege; **SSO + MFA** for agents/admins; role-based record access in SuiteCRM; no shared logins. ✅ **Implemented** for the app: Google OAuth + Twilio Verify 2FA, an agent allowlist, and signed httpOnly session cookies now gate the agent page, the Twilio token endpoint, and the WebSocket — identity comes from the session, not a URL param (see README → Authentication). Still to do at the cloud layer: IAM least-privilege + SuiteCRM role-based access. |
-| 4 | **Audit logging** | CloudTrail (infra) + SuiteCRM access logs: who accessed which customer record, when. Retain logs per policy. |
+| 2 | **Encryption everywhere** | TLS 1.2+ in transit; AES-256 at rest via AWS KMS (RDS, S3, EBS); ERPNext DB on encrypted RDS. |
+| 3 | **Least-privilege access + MFA** | IAM least-privilege; **SSO + MFA** for agents/admins; role-based record access in ERPNext; no shared logins. ✅ **Implemented** for the app: Google OAuth + Twilio Verify 2FA, an agent allowlist, and signed httpOnly session cookies now gate the agent page, the Twilio token endpoint, and the WebSocket — identity comes from the session, not a URL param (see README → Authentication). Still to do at the cloud layer: IAM least-privilege + ERPNext role-based access. |
+| 4 | **Audit logging** | CloudTrail (infra) + ERPNext access logs: who accessed which customer record, when. Retain logs per policy. |
 | 5 | **Retention minimization** | Transcripts are in-memory only and dropped after recap (already true); set a recording-retention policy (PCI recordings default to 1 year); Claude via Bedrock keeps data in-account / Anthropic direct = 30-day. |
 | 6 | **Network isolation** | Private subnets, security groups, VPC endpoints/PrivateLink for Bedrock/S3; public ingress only for Twilio webhooks/Media Streams, behind WAF + TLS. |
 | 7 | **Secrets management** | AWS Secrets Manager; no secrets in the repo or plaintext env on disk. (`.env` is gitignored — keep it that way.) |
@@ -104,7 +104,7 @@ Twilio Voice (BAA + PCI DSS L1)
         │                         ▼
         │                   Claude via Amazon Bedrock (BAA, in-region, IAM/VPC)
         ▼
-  SuiteCRM on EC2 + RDS for MySQL (PII/PHI lives here, in-VPC, KMS-encrypted)
+  ERPNext on EC2 + RDS for MariaDB (PII/PHI lives here, in-VPC, KMS-encrypted)
 ```
 
 ---
@@ -117,7 +117,7 @@ Twilio Voice (BAA + PCI DSS L1)
 | **Card capture** | Twilio [`<Pay>` in PCI mode](https://www.twilio.com/docs/voice/pci-workflows) | Card data captured compliantly + **redacted from recordings/logs**; pause recording+transcription during the payment segment |
 | **Transcription (STT)** | **Deepgram** — self-hosted on AWS or managed + BAA | [Deepgram signs a BAA, supports self-host, and offers PII/PHI redaction](https://www.accountablehq.com/post/is-deepgram-hipaa-compliant-baas-phi-and-security-explained) (`redact=pii`/`redact=phi`, [redaction docs](https://developers.deepgram.com/docs/redaction)) |
 | **LLM (coaching/recap)** | **Claude via Amazon Bedrock** (or direct Anthropic API with BAA) | [Anthropic signs a BAA for the Claude API](https://privacy.claude.com/en/articles/8114513-business-associate-agreements-baa-for-commercial-customers); Bedrock runs in-account under AWS BAA |
-| **CRM** | SuiteCRM on EC2 + RDS for MySQL | HIPAA-eligible AWS services under AWS BAA; KMS encryption |
+| **CRM** | ERPNext on EC2 + RDS for MariaDB | HIPAA-eligible AWS services under AWS BAA; KMS encryption |
 | **Hosting** | AWS account with signed BAA | Hetzner cannot sign a BAA → unsuitable for PHI |
 
 ### Retention nuance (important)
@@ -142,7 +142,7 @@ not a compliance silver bullet; keep PHI inside the BAA boundary regardless.
 | **Card numbers** | Nowhere in our systems | Captured by Twilio `<Pay>`; recording/transcription paused; redacted from Twilio logs |
 | **Raw call audio** | Twilio → (in-VPC) Deepgram | TLS in transit; self-hosted Deepgram keeps audio in-VPC |
 | **Transcripts** | Process memory only, dropped after recap (today); | Redacted at STT layer before LLM/CRM; not persisted by the app |
-| **Recap (PII/PHI)** | SuiteCRM (RDS), in-VPC | KMS at rest, IAM, CloudTrail; BAA-covered |
+| **Recap (PII/PHI)** | ERPNext (RDS), in-VPC | KMS at rest, IAM, CloudTrail; BAA-covered |
 | **LLM prompts/outputs** | Bedrock in-account (or Anthropic, 30-day) | In-region, IAM/VPC; BAA-covered |
 
 ---
@@ -151,12 +151,12 @@ not a compliance silver bullet; keep PHI inside the BAA boundary regardless.
 
 - **Compute:** ECS Fargate or EC2 (Node app); EKS/EC2 for self-hosted Deepgram.
 - **LLM:** Amazon Bedrock (Anthropic Claude), same region.
-- **Data:** RDS for MySQL (SuiteCRM), S3 (if recordings retained — KMS + lifecycle).
+- **Data:** RDS for MariaDB (ERPNext), S3 (if recordings retained — KMS + lifecycle).
 - **Network:** private subnets, security groups, PrivateLink/VPC endpoints for
   Bedrock/S3; public ingress only for Twilio webhooks/Media Streams (WAF + TLS).
 - **Crypto/keys:** KMS (CMKs) for RDS/S3/EBS.
 - **Identity/audit:** IAM least-privilege, CloudTrail, GuardDuty, AWS Config.
-- **Secrets:** AWS Secrets Manager (Twilio/Deepgram/SuiteCRM credentials).
+- **Secrets:** AWS Secrets Manager (Twilio/Deepgram/ERPNext credentials).
 
 ---
 
@@ -168,8 +168,8 @@ not a compliance silver bullet; keep PHI inside the BAA boundary regardless.
    (Security/Enterprise Edition), Deepgram, Anthropic. Enable Bedrock + Claude
    model access in-region.
 3. **Stand up VPC + baseline** (KMS, CloudTrail, IAM, Secrets Manager).
-4. **Move SuiteCRM** to EC2/RDS (coordinated with the CRM chat — see
-   `docs/suitecrm-integration-contract.md`).
+4. **Move ERPNext** to EC2/RDS (coordinated with the CRM chat — see
+   `docs/erpnext-integration-contract.md`).
 5. **Deploy the Node app** to ECS/EC2; point `PUBLIC_BASE_URL` at the new domain.
 6. **In-repo code changes (Section 8).**
 7. **Cut over** Twilio webhooks; decommission Hetzner for any regulated component.

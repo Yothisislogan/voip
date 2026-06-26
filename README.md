@@ -74,32 +74,32 @@ Open **http://localhost:3000/softphone.html?identity=marisol.vega**.
 | `/voice/status` callback | `UPDATE calls` status / answered_at / ended_at / talk_seconds |
 | `/recording/status` callback | `INSERT call_recordings` (consent=disclosed, retention) |
 
-## AI sales assist + SuiteCRM (new)
+## AI sales assist + ERPNext CRM (new)
 
 Three capabilities layer on top of the softphone. All are **optional and
 feature-flagged** — if their keys are unset, the phone works exactly as before.
 
-1. **SuiteCRM screen-pop** — when a call connects, the backend looks up the
-   caller's number in SuiteCRM (V8 JSON:API, OAuth2) and pushes the matching
-   contact (with a deep link) to the agent screen.
+1. **ERPNext screen-pop** — when a call connects, the backend looks up the
+   caller's number in ERPNext (Frappe REST API, token auth) as a Contact then a
+   Lead, and pushes the matching record (with a deep link) to the agent screen.
 2. **Real-time coaching** — Twilio real-time transcription forks the call audio
    to `/voice/transcription`; finalized utterances are buffered and fed to Claude,
    which returns short cues across four lenses (objection handling, compliance
    disclosures, next-best question, sentiment/pacing) pushed live to the agent.
 3. **End-of-call recap** — when transcription stops, Claude summarizes the full
-   transcript into structured fields and writes a Note + logged Call onto the
-   customer's SuiteCRM contact.
+   transcript into structured fields and writes a Communication (on the record's
+   timeline) plus a Call Log onto the customer's ERPNext record.
 
 ### Architecture
 
 ```
 Twilio call ──<Start><Transcription>──▶ POST /voice/transcription ─┐
                                                                    ├─▶ transcript buffer (per CallSid)
-inbound/outbound ─▶ SuiteCRM V8 lookup ─▶ screen-pop              │
+inbound/outbound ─▶ ERPNext Contact/Lead lookup ─▶ screen-pop     │
                                                                    ▼
 Agent browser ◀── WebSocket /ws/agent ◀── coaching cues (Claude) + screen-pop
                                                                    │
-transcription-stopped ─▶ recap (Claude) ─▶ Note + Call on SuiteCRM contact
+transcription-stopped ─▶ recap (Claude) ─▶ Communication + Call Log on ERPNext record
 ```
 
 The unified **agent workspace** is at `/agent.html` — dialer, live CRM card, and
@@ -109,7 +109,7 @@ URL parameter.
 
 | File | Role |
 | --- | --- |
-| `src/crm/suitecrm.js` | SuiteCRM V8 client (OAuth2, find-contact-by-phone, write Note/Call) |
+| `src/crm/erpnext.js` | ERPNext (Frappe) client (token auth, find-contact-by-phone, write Communication/Call Log) |
 | `src/ai/coach.js` / `recap.js` | Claude coaching cues + structured recap |
 | `src/ai/transcript.js` | per-call transcript buffer |
 | `src/realtime/orchestrator.js` | ties transcription → coaching → recap together |
@@ -120,10 +120,10 @@ URL parameter.
 
 See `.env.example`. Everything is optional:
 
-- **SuiteCRM** — `SUITECRM_BASE_URL`, `SUITECRM_CLIENT_ID`, `SUITECRM_CLIENT_SECRET`,
-  and (recommended) `SUITECRM_USERNAME` / `SUITECRM_PASSWORD`. Create a client in
-  SuiteCRM under **Admin → OAuth2 Clients and Tokens → New Password Client** and
-  use a dedicated agent user.
+- **ERPNext** — `ERPNEXT_BASE_URL`, `ERPNEXT_API_KEY`, `ERPNEXT_API_SECRET`.
+  Generate keys in ERPNext under **User → Settings → API Access → Generate Keys**,
+  using a dedicated integration user with access to Contact, Lead, Communication,
+  and Call Log. Set `ERPNEXT_UI_URL` if the desk URL differs from the API base.
 - **Claude** — `LLM_BACKEND` selects the backend:
   - `anthropic` (default): direct API, set `ANTHROPIC_API_KEY`.
   - `bedrock`: Amazon Bedrock — set `AWS_REGION` + AWS credentials (standard AWS
@@ -158,10 +158,11 @@ npm test   # node --test: phone normalization, transcript buffering,
 ### What to verify on a live setup
 
 - Place an outbound call from `/agent.html` → a known CRM number; confirm the
-  screen-pop card shows the contact and the deep link opens SuiteCRM.
+  screen-pop card shows the contact and the deep link opens ERPNext.
 - Speak both sides; confirm coaching cues appear within a few seconds.
-- Hang up; confirm a recap renders and a Note appears on the contact in SuiteCRM.
-- With `ANTHROPIC_API_KEY` / SuiteCRM unset, confirm the phone still places and
+- Hang up; confirm a recap renders and a Communication appears on the record's
+  timeline in ERPNext.
+- With `ANTHROPIC_API_KEY` / ERPNext unset, confirm the phone still places and
   receives calls normally (features silently skip).
 
 ## Authentication (Google OAuth + 2FA)

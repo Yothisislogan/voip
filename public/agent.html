@@ -95,7 +95,7 @@
     <!-- ── Live CRM + coaching ── -->
     <div>
       <div class="card" aria-live="polite">
-        <h2>Customer (SuiteCRM)</h2>
+        <h2>Customer (ERPNext)</h2>
         <div id="crm"><div class="empty">No active call. The caller's CRM record appears here when a call connects.</div></div>
       </div>
 
@@ -197,7 +197,7 @@ function renderCRM(contact, phone){
       ${contact.email ? row("Email", contact.email) : ""}
       ${contact.title ? row("Title", contact.title) : ""}
     </div>
-    ${contact.url ? `<a class="crm-link" href="${contact.url}" target="_blank" rel="noopener">Open in SuiteCRM →</a>` : ""}`;
+    ${contact.url ? `<a class="crm-link" href="${contact.url}" target="_blank" rel="noopener">Open in ERPNext →</a>` : ""}`;
 }
 function row(k,v){ return `<div class="crm-row"><span>${k}</span><span>${esc(v||"")}</span></div>`; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
@@ -226,7 +226,7 @@ function renderRecap(msg){
     <div class="recap-field"><b>Objections</b>${list(r.objections)}</div>
     <div class="recap-field"><b>Next steps</b>${list(r.nextSteps)}</div>
     ${r.followUpDate ? `<div class="recap-field"><b>Follow-up</b>${esc(r.followUpDate)}</div>` : ""}
-    <div class="senti">${msg.savedToCrm ? "✓ Saved to SuiteCRM" : "Not saved to CRM (CRM disabled or contact not found)"}</div>`;
+    <div class="senti">${msg.savedToCrm ? "✓ Saved to ERPNext" : "Not saved to CRM (CRM disabled or contact not found)"}</div>`;
 }
 
 function connectWS(){

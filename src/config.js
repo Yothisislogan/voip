@@ -36,20 +36,17 @@ export const config = {
   defaultAgentIdentity: process.env.DEFAULT_AGENT_IDENTITY || "agent",
   databaseUrl: process.env.DATABASE_URL || null,
 
-  // ─── SuiteCRM V8 REST API (OAuth2) ───────────────────────
-  // Feature is optional: if baseUrl/clientId/secret are unset, the CRM
-  // integration no-ops (screen-pop + recap silently skip) so the phone
-  // keeps working. SuiteCRM 7.10+ exposes the V8 JSON:API at /Api/V8.
-  suitecrm: {
-    baseUrl: (process.env.SUITECRM_BASE_URL || "").replace(/\/$/, ""),
-    clientId: process.env.SUITECRM_CLIENT_ID || null,
-    clientSecret: process.env.SUITECRM_CLIENT_SECRET || null,
-    // Password grant (recommended for a trusted server-to-server agent user).
-    username: process.env.SUITECRM_USERNAME || null,
-    password: process.env.SUITECRM_PASSWORD || null,
-    // Deep-link base used by the agent UI to open a record in SuiteCRM.
+  // ─── ERPNext (Frappe) REST API ───────────────────────────
+  // Feature is optional: if baseUrl/apiKey/apiSecret are unset, the CRM
+  // integration no-ops (screen-pop + recap silently skip) so the phone keeps
+  // working. Uses Frappe token auth + /api/resource endpoints.
+  erpnext: {
+    baseUrl: (process.env.ERPNEXT_BASE_URL || "").replace(/\/$/, ""),
+    apiKey: process.env.ERPNEXT_API_KEY || null,
+    apiSecret: process.env.ERPNEXT_API_SECRET || null,
+    // Deep-link base used by the agent UI to open a record in ERPNext.
     // Defaults to baseUrl if unset.
-    uiUrl: (process.env.SUITECRM_UI_URL || process.env.SUITECRM_BASE_URL || "").replace(/\/$/, ""),
+    uiUrl: (process.env.ERPNEXT_UI_URL || process.env.ERPNEXT_BASE_URL || "").replace(/\/$/, ""),
   },
 
   // ─── Anthropic (Claude) — real-time coaching + call recap ─

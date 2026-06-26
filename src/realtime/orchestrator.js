@@ -2,7 +2,7 @@ import { config } from "../config.js";
 import { transcripts } from "../ai/transcript.js";
 import { generateCoaching } from "../ai/coach.js";
 import { generateRecap, formatRecapNote } from "../ai/recap.js";
-import { findContactByPhone, writeRecapNote, logCallActivity } from "../crm/suitecrm.js";
+import { findContactByPhone, writeRecapNote, logCallActivity } from "../crm/erpnext.js";
 import { getSession, setContact, endSession } from "./sessions.js";
 import { publishToAgent } from "./bus.js";
 
@@ -25,7 +25,7 @@ export function resolveSpeaker(direction, track) {
 }
 
 /**
- * Screen-pop: resolve the caller in SuiteCRM and push the record to the agent.
+ * Screen-pop: resolve the caller in ERPNext and push the record to the agent.
  * Safe to call fire-and-forget after responding to a webhook.
  */
 export async function doScreenPop(callSid) {
@@ -93,17 +93,20 @@ export async function onCallComplete(callSid, durationSec) {
 
     let noteId = null;
     if (note) {
+      // Recap as a Communication on the contact's/lead's timeline.
       noteId = await writeRecapNote({
-        contactId: contact?.id || null,
+        contact,
         subject: note.subject,
         description: note.description,
       });
-      // Also log it as a Call activity for CRM reporting (best-effort).
+      // Plus a best-effort Call Log entry for telephony reporting.
       await logCallActivity({
-        contactId: contact?.id || null,
-        subject: note.subject,
-        description: note.description,
+        contact,
+        callSid,
+        from: session.from,
+        to: session.to,
         durationSec,
+        direction: session.direction,
       });
     }
 
