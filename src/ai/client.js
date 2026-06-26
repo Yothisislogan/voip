@@ -5,75 +5,73 @@ import { rulesStructuredCompletion } from "./providers/rules.js";
 import { ollamaStructuredCompletion } from "./providers/ollama.js";
 
 /**
- * Shared AI router for coaching + recap.
+ * AI router for coaching + recap, with PER-TASK backends.
  *
  * Providers:
  *   - rules:     deterministic local coaching/recap, no API, no GPU
- *   - ollama:    local/server-hosted LLM with rules fallback
+ *   - ollama:    tiny local/server LLM with automatic rules fallback
  *   - anthropic: direct Claude API
  *   - bedrock:   Claude through Amazon Bedrock
  *
- * Live call code should never throw because AI is optional. Every provider
- * returns null or a safe fallback rather than disrupting the phone path.
+ * Live coaching is LOCAL-first by design: it runs the rules engine (or the tiny
+ * Ollama model with rules fallback) and never depends on Claude unless an
+ * operator explicitly sets LLM_COACHING_BACKEND. Recap follows LLM_BACKEND, so
+ * Claude/Bedrock can power higher-quality recaps. Claude is entirely optional.
+ *
+ * The live-call path never throws because AI is optional — every provider
+ * returns a safe fallback rather than disrupting the phone.
  */
 
-const backend = normalizeBackend(config.llm.backend);
+export const coachingBackend = normalizeBackend(config.llm.coachingBackend);
+export const recapBackend = normalizeBackend(config.llm.recapBackend);
 
-export let aiEnabled = backend === "rules" || backend === "ollama";
+const claudeBackends = [coachingBackend, recapBackend];
+const usesClaude = claudeBackends.some((b) => b === "anthropic" || b === "bedrock");
+const needsBedrock = claudeBackends.includes("bedrock");
+
+// Rules are always available, so AI is effectively always "on".
+export const aiEnabled = true;
 export let anthropic = null;
+let claudeIsBedrock = false;
 
 try {
-  if (backend === "bedrock") {
-    if (config.anthropic.awsRegion) {
+  if (usesClaude) {
+    if (needsBedrock && config.anthropic.awsRegion) {
       anthropic = new AnthropicBedrockMantle({ awsRegion: config.anthropic.awsRegion });
-      aiEnabled = true;
-      console.log(
-        `AI enabled via Amazon Bedrock (recap: ${modelId(config.anthropic.model)}, coaching: ${modelId(config.anthropic.coachingModel)}).`
-      );
-    } else {
-      console.log("LLM_BACKEND=bedrock but AWS_REGION is not set. Falling back to rules coach.");
-      aiEnabled = true;
-    }
-  } else if (backend === "anthropic") {
-    if (config.anthropic.apiKey) {
+      claudeIsBedrock = true;
+    } else if (config.anthropic.apiKey) {
       anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
-      aiEnabled = true;
-      console.log(
-        `AI enabled via Anthropic API (recap: ${config.anthropic.model}, coaching: ${config.anthropic.coachingModel}).`
-      );
-    } else {
-      console.log("LLM_BACKEND=anthropic but ANTHROPIC_API_KEY is not set. Falling back to rules coach.");
-      aiEnabled = true;
     }
-  } else if (backend === "ollama") {
-    console.log(
-      `AI enabled via Ollama (${config.llm.ollama.baseUrl}; coaching: ${config.llm.ollama.coachingModel}; recap: ${config.llm.ollama.recapModel}). Rules fallback is active.`
-    );
-  } else {
-    console.log("AI enabled via local rules coach. Set LLM_BACKEND=ollama or anthropic for model-backed coaching.");
   }
 } catch (err) {
-  console.error("AI client init failed; falling back to local rules coach:", err.message);
+  console.error("Claude client init failed; recap will fall back to local:", err.message);
   anthropic = null;
-  aiEnabled = true;
 }
 
+logStartup();
+
 export function modelId(bare) {
-  if (backend !== "bedrock") return bare;
+  if (!claudeIsBedrock) return bare;
   return bare.startsWith("anthropic.") ? bare : `anthropic.${bare}`;
 }
 
+/**
+ * Route a structured completion to the backend for its task. Task is inferred
+ * from schemaName: "call_recap" → recap backend, anything else → coaching.
+ */
 export async function structuredCompletion(args) {
-  if (!aiEnabled) return null;
+  const isRecap = args.schemaName === "call_recap";
+  const backend = isRecap ? recapBackend : coachingBackend;
 
   if (backend === "rules") return rulesStructuredCompletion(args);
   if (backend === "ollama") return ollamaStructuredCompletion(args);
 
   if ((backend === "anthropic" || backend === "bedrock") && anthropic) {
     const res = await claudeStructuredCompletion(args);
-    return res || rulesStructuredCompletion(args);
+    return res || rulesStructuredCompletion(args); // never leave the caller empty
   }
 
+  // Claude requested but no client available (missing key/region) → local.
   return rulesStructuredCompletion(args);
 }
 
@@ -114,6 +112,18 @@ async function claudeStructuredCompletion({
 function normalizeBackend(value) {
   const b = String(value || "rules").toLowerCase();
   if (["rules", "ollama", "anthropic", "bedrock"].includes(b)) return b;
-  console.warn(`Unknown LLM_BACKEND=${value}; using rules.`);
+  console.warn(`Unknown AI backend "${value}"; using rules.`);
   return "rules";
+}
+
+function logStartup() {
+  const claudeNote = usesClaude
+    ? anthropic
+      ? ` (Claude via ${claudeIsBedrock ? "Bedrock" : "API"} ready)`
+      : " (Claude requested but not configured — falling back to local)"
+    : "";
+  console.log(
+    `AI: coaching=${coachingBackend}, recap=${recapBackend}${claudeNote}. ` +
+      "Live coaching is local-first; rules fallback always on."
+  );
 }

@@ -15,6 +15,33 @@ COACHING_THROTTLE_MS=6000
 
 `rules` is deterministic and runs inside Node. It does not need an API key, GPU, model download, or external service.
 
+## Coaching vs recap are separate backends
+
+Claude is optional and **never powers live coaching by default**. Backends are
+resolved per task:
+
+- **Coaching (real-time):** local-first. Uses `rules`, or the tiny local model
+  when `LLM_BACKEND=ollama`. It does **not** use Claude unless you explicitly set
+  `LLM_COACHING_BACKEND`.
+- **Recap (post-call):** follows `LLM_BACKEND`, so Claude/Bedrock can produce
+  higher-quality recaps while live tips stay local and fast.
+
+| `LLM_BACKEND` | coaching backend | recap backend |
+|---|---|---|
+| `rules` (default) | rules | rules |
+| `ollama` | ollama (rules fallback) | ollama (rules fallback) |
+| `anthropic` | **rules** | anthropic (Claude) |
+| `bedrock` | **rules** | bedrock (Claude) |
+
+Override either side with `LLM_COACHING_BACKEND` / `LLM_RECAP_BACKEND`. Example —
+tiny local model for live cues, Claude for the recap:
+
+```env
+LLM_COACHING_BACKEND=ollama
+LLM_RECAP_BACKEND=anthropic
+ANTHROPIC_API_KEY=your_key
+```
+
 ## Local Ollama option
 
 Install Ollama on the server or on a nearby private machine, then pull a tiny CPU-friendly model:

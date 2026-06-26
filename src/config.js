@@ -66,6 +66,15 @@ export const config = {
   //   bedrock   = Claude through Amazon Bedrock
   llm: {
     backend: (process.env.LLM_BACKEND || "rules").toLowerCase(),
+    // Per-task backends. Live coaching stays LOCAL-first (rules, or the tiny
+    // local LLM when LLM_BACKEND=ollama) and never uses Claude unless explicitly
+    // overridden — real-time tips must not depend on a cloud LLM. Recap follows
+    // LLM_BACKEND, so Claude/Bedrock can power higher-quality recaps.
+    coachingBackend: (
+      process.env.LLM_COACHING_BACKEND ||
+      ((process.env.LLM_BACKEND || "rules").toLowerCase() === "ollama" ? "ollama" : "rules")
+    ).toLowerCase(),
+    recapBackend: (process.env.LLM_RECAP_BACKEND || process.env.LLM_BACKEND || "rules").toLowerCase(),
     timeoutMs: Number(process.env.LOCAL_LLM_TIMEOUT_MS) || 1200,
     ollama: {
       baseUrl: (process.env.OLLAMA_BASE_URL || "http://localhost:11434").replace(/\/$/, ""),
