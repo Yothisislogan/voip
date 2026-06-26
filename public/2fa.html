@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WIT Connect — Verify</title>
+<style>
+  :root{--blue:#00AEEF;--ink:#06121D;--paper:#F4F8FB;--line:#E3EBF1;--mute:#6B7280}
+  *{box-sizing:border-box;font-family:'IBM Plex Sans',-apple-system,system-ui,sans-serif}
+  body{margin:0;background:var(--paper);color:var(--ink);display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+  .card{width:360px;background:#fff;border:1px solid var(--line);border-radius:18px;padding:32px;box-shadow:0 18px 40px rgba(6,18,29,.08);text-align:center}
+  .logo{width:46px;height:46px;border-radius:12px;background:var(--blue);color:#fff;font-weight:800;font-size:22px;display:flex;align-items:center;justify-content:center;margin:0 auto 14px}
+  h1{font-size:20px;margin:0 0 4px}
+  p.sub{color:var(--mute);font-size:13px;margin:0 0 22px}
+  input{width:100%;padding:14px;border:1px solid var(--line);border-radius:12px;font-size:22px;text-align:center;letter-spacing:.4em;font-family:'IBM Plex Mono',monospace}
+  button{width:100%;margin-top:14px;padding:13px;border:none;border-radius:12px;background:var(--blue);color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+  .resend{margin-top:14px;background:none;border:none;color:var(--mute);font-size:13px;cursor:pointer;text-decoration:underline;width:auto}
+  .err{background:#FFF3F3;border:1px solid #FFD4D4;color:#B42318;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:16px}
+  .ok{background:#EAF8F0;border:1px solid #BFE9D2;color:#1B7F4B;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:16px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">W</div>
+    <h1>Verify it's you</h1>
+    <p class="sub">Enter the code we just sent you.</p>
+    <div id="msg"></div>
+    <form method="POST" action="/2fa">
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" placeholder="••••••" autofocus required />
+      <button type="submit">Verify</button>
+    </form>
+    <form method="POST" action="/2fa/resend"><button type="submit" class="resend">Resend code</button></form>
+  </div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const msg = document.getElementById("msg");
+  if (q.get("error") === "invalid_code") { msg.className = "err"; msg.textContent = "That code didn't match. Try again."; }
+  else if (q.get("resent")) { msg.className = "ok"; msg.textContent = "A new code is on its way."; }
+</script>
+</body>
+</html>

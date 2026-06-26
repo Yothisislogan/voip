@@ -9,19 +9,42 @@ import { config } from "./config.js";
 import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
 import { recordingRouter } from "./routes/recording.js";
+import { authRouter } from "./routes/auth.js";
+import { pageGate } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, "..", "public");
 
 const app = express();
-app.use(cors());
+
+// Restrictive CORS with credentials. Same-origin requests don't hit CORS at
+// all; only the configured origins may make cross-origin authenticated calls.
+app.use(
+  cors({
+    origin: config.allowedOrigins.length ? config.allowedOrigins : false,
+    credentials: true,
+  })
+);
 app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
 app.use(express.json());
 
-// Serve the browser softphone at /softphone.html
-app.use(express.static(path.join(__dirname, "..", "public")));
-
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Authentication (Google OAuth + Twilio Verify 2FA) — login flow is public.
+app.use(authRouter);
+app.get("/login", (_req, res) => res.sendFile(path.join(publicDir, "login.html")));
+app.get("/2fa", (_req, res) => res.sendFile(path.join(publicDir, "2fa.html")));
+
+// Gate the app pages: an authenticated "full" session is required, otherwise
+// redirect to /login. The login + 2FA pages are served by static, ungated.
+const PROTECTED_PAGES = new Set(["/", "/index.html", "/softphone.html", "/agent.html"]);
+app.use((req, res, next) => {
+  if (PROTECTED_PAGES.has(req.path)) return pageGate(req, res, next);
+  next();
+});
+
+app.use(express.static(publicDir));
 
 // Validate X-Twilio-Signature on all webhook routes.
 // TODO(prod): remove the config.publicBaseUrl guard once PUBLIC_BASE_URL is always set.
@@ -39,8 +62,12 @@ attachAgentWss(server);
 
 server.listen(config.port, () => {
   console.log(`\u260E\uFE0F  WIT Connect telephony running on http://localhost:${config.port}`);
-  console.log(`   Softphone:       http://localhost:${config.port}/softphone.html`);
-  console.log(`   Agent workspace: http://localhost:${config.port}/agent.html?identity=marisol.vega`);
+  console.log(`   Agent workspace: http://localhost:${config.port}/agent.html`);
+  if (!config.auth.required) {
+    console.log("   \u26A0\uFE0F  AUTH_REQUIRED=false \u2014 login is BYPASSED (dev only). Never use in production.");
+  } else if (!config.auth.sessionSecret) {
+    console.log("   \u26A0\uFE0F  SESSION_SECRET is not set \u2014 login cannot issue sessions. Set it before use.");
+  }
   if (!config.publicBaseUrl) {
     console.log("   \u26A0\uFE0F  PUBLIC_BASE_URL is empty \u2014 webhooks/recordings/transcription need a public URL (use ngrok).");
   }

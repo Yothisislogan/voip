@@ -102,9 +102,10 @@ Agent browser ◀── WebSocket /ws/agent ◀── coaching cues (Claude) + s
 transcription-stopped ─▶ recap (Claude) ─▶ Note + Call on SuiteCRM contact
 ```
 
-The unified **agent workspace** is at `/agent.html?identity=<agent>` — dialer,
-live CRM card, and coaching cues in one screen. The original `/softphone.html`
-is unchanged.
+The unified **agent workspace** is at `/agent.html` — dialer, live CRM card, and
+coaching cues in one screen. Access requires an authenticated session (see
+**Authentication** below); the agent's identity comes from that session, not a
+URL parameter.
 
 | File | Role |
 | --- | --- |
@@ -155,6 +156,50 @@ npm test   # node --test: phone normalization, transcript buffering,
 - Hang up; confirm a recap renders and a Note appears on the contact in SuiteCRM.
 - With `ANTHROPIC_API_KEY` / SuiteCRM unset, confirm the phone still places and
   receives calls normally (features silently skip).
+
+## Authentication (Google OAuth + 2FA)
+
+The app pages, the Twilio token endpoint, and the agent WebSocket all require an
+authenticated session. Agents sign in with **Google**, then complete a **second
+factor** via **Twilio Verify** (SMS or email). Identity is derived from a signed,
+httpOnly session cookie — never from a URL parameter — so an agent can only ever
+get a token for, and receive live events (which contain customer PII) for, their
+own identity.
+
+### Flow
+
+```
+/agent.html ──(no session)──▶ /login ──"Sign in with Google"──▶ Google OAuth
+   ▲                                                                  │
+   │                                            verified email checked against
+   │                                                  AGENT_DIRECTORY allowlist
+   │                                                                  │
+   └──(full session cookie)── /2fa ◀──(pending session + Twilio Verify code)──┘
+```
+
+- **Allowlist:** only emails in `AGENT_DIRECTORY` can sign in; each maps to a
+  Twilio identity and an MFA destination. (Optionally also restrict to a Google
+  Workspace domain with `GOOGLE_HOSTED_DOMAIN`.)
+- **Two trust levels:** `pending-2fa` after Google, `full` only after the code is
+  verified. Only `full` may use the app.
+- **Sessions** are stateless signed JWTs in an httpOnly + SameSite=Lax cookie
+  (Secure when served over HTTPS) — no session store, multi-instance friendly.
+
+### Setup
+
+1. **Google:** Cloud Console → APIs & Services → Credentials → OAuth client ID
+   (Web application). Add redirect URI `{PUBLIC_BASE_URL}/auth/google/callback`.
+   Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+2. **Twilio Verify:** Console → Verify → Services → create one; set
+   `TWILIO_VERIFY_SERVICE_SID`. (For the email channel, configure Verify's email
+   integration.)
+3. **Secrets:** `SESSION_SECRET` = `openssl rand -hex 32`.
+4. **Allowlist:** fill `AGENT_DIRECTORY` (see `.env.example`).
+
+### Local dev
+
+Set `AUTH_REQUIRED=false` to bypass login and inject `DEV_IDENTITY` — **dev
+only**, and the server prints a loud warning. Never use it in production.
 
 ## Still required before production (planning doc §10.1)
 

@@ -62,7 +62,11 @@
   <div class="top">
     <div class="logo">W</div>
     <div><b style="font-size:16px">WIT Connect</b><small>AGENT WORKSPACE</small></div>
-    <div class="conn"><span class="dot" id="dot"></span><span id="state">Connecting…</span></div>
+    <div class="conn">
+      <span class="dot" id="dot"></span><span id="state">Connecting…</span>
+      <span id="who" style="margin-left:10px;font-size:12px"></span>
+      <form method="POST" action="/logout" style="margin:0 0 0 10px"><button type="submit" style="border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer">Log out</button></form>
+    </div>
   </div>
 
   <div class="grid">
@@ -111,8 +115,6 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const display = $("display"), log = (m) => ($("log").textContent = m);
-const params = new URLSearchParams(location.search);
-const identity = params.get("identity") || "";
 
 let device, activeCall = null, muted = false;
 
@@ -131,17 +133,22 @@ function setState(text, online){ $("state").textContent = text; $("dot").classLi
 function inCallUI(on){ $("callBtn").classList.toggle("hidden",on); $("hangBtn").classList.toggle("hidden",!on); $("muteBtn").classList.toggle("hidden",!on); }
 
 // ── Twilio device ──
+async function fetchToken() {
+  const res = await fetch("/token", { credentials: "same-origin" });
+  if (res.status === 401) { location.href = "/login"; throw new Error("unauthenticated"); }
+  if (!res.ok) throw new Error(`token HTTP ${res.status}`);
+  return res.json();
+}
+
 async function initDevice() {
   try {
-    const res = await fetch(`/token${identity ? "?identity=" + encodeURIComponent(identity) : ""}`);
-    const { token, identity: id } = await res.json();
+    const { token, identity: id } = await fetchToken();
     device = new Twilio.Device(token, { codecPreferences: ["opus", "pcmu"] });
     device.on("registered", () => setState(`Ready · ${id}`, true));
     device.on("error", (e) => { setState("Device error", false); log(e.message); });
     device.on("tokenWillExpire", async () => {
       try {
-        const r = await fetch(`/token?identity=${encodeURIComponent(id)}`);
-        device.updateToken((await r.json()).token);
+        device.updateToken((await fetchToken()).token);
       } catch { setState("Token refresh failed — reload", false); }
     });
     device.on("incoming", (call) => {
@@ -223,9 +230,9 @@ function renderRecap(msg){
 }
 
 function connectWS(){
-  if (!identity) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws/agent?identity=${encodeURIComponent(identity)}`);
+  // Identity comes from the session cookie sent on the upgrade — no URL param.
+  const ws = new WebSocket(`${proto}://${location.host}/ws/agent`);
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === "screenpop") {
@@ -242,6 +249,16 @@ function connectWS(){
   ws.onclose = () => setTimeout(connectWS, 3000); // auto-reconnect
 }
 
+async function showWhoami(){
+  try {
+    const r = await fetch("/auth/me", { credentials: "same-origin" });
+    if (r.status === 401) { location.href = "/login"; return; }
+    const me = await r.json();
+    $("who").textContent = me.name ? `${me.name}` : (me.identity || "");
+  } catch { /* non-fatal */ }
+}
+
+showWhoami();
 initDevice();
 connectWS();
 </script>

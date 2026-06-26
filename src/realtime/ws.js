@@ -1,14 +1,17 @@
 import { WebSocketServer } from "ws";
 import { URL } from "node:url";
 import { subscribeAgent } from "./bus.js";
+import { authenticateUpgrade } from "../auth/middleware.js";
 
 /**
  * WebSocket channel that pushes screen-pop / coaching / recap events to the
  * agent's unified screen. The browser connects to:
  *
- *   ws(s)://<host>/ws/agent?identity=<agent-identity>
+ *   ws(s)://<host>/ws/agent
  *
- * and receives JSON messages: {type: "screenpop"|"coaching"|"recap", ...}.
+ * Identity is taken from the authenticated session cookie sent on the upgrade
+ * request — NOT from the URL — so an agent only ever receives their own calls'
+ * events (which contain customer PII). Unauthenticated upgrades are rejected.
  *
  * Attach to the same HTTP server the Express app listens on so it shares the
  * port (and Render's single exposed port).
@@ -28,15 +31,18 @@ export function attachAgentWss(server) {
       socket.destroy();
       return;
     }
+    const agent = authenticateUpgrade(req);
+    if (!agent?.identity) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    req._agentIdentity = agent.identity;
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
   });
 
   wss.on("connection", (ws, req) => {
-    const identity = new URL(req.url, "http://localhost").searchParams.get("identity");
-    if (!identity) {
-      ws.close(1008, "identity required");
-      return;
-    }
+    const identity = req._agentIdentity;
 
     const unsubscribe = subscribeAgent(identity, (event) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(event));

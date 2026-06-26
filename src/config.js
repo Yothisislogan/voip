@@ -20,6 +20,12 @@ if (missing.length) {
 export const config = {
   port: Number(process.env.PORT) || 3000,
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
+  // Cross-origin allowlist for browser fetches. Empty = same-origin only
+  // (most secure; the agent UI is served from this same server).
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID,
     apiKeySid: process.env.TWILIO_API_KEY_SID,
@@ -65,7 +71,51 @@ export const config = {
   // Minimum ms between coaching LLM calls per call, to bound cost/latency
   // when the transcript is chatty.
   coachingThrottleMs: Number(process.env.COACHING_THROTTLE_MS) || 6000,
+
+  // ─── Authentication (Google OAuth + Twilio Verify 2FA) ────
+  auth: {
+    // Secure by default. Set AUTH_REQUIRED=false ONLY for local dev — it
+    // bypasses login and injects DEV_IDENTITY. Never do this in production.
+    required: process.env.AUTH_REQUIRED !== "false",
+    devIdentity: process.env.DEV_IDENTITY || "marisol.vega",
+    // HMAC secret for the signed session cookie (JWT). Required when auth is on.
+    sessionSecret: process.env.SESSION_SECRET || null,
+    cookieName: process.env.SESSION_COOKIE_NAME || "wit_session",
+    sessionTtlSec: Number(process.env.SESSION_TTL_SEC) || 8 * 60 * 60, // 8h
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || null,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
+      // Falls back to PUBLIC_BASE_URL (or localhost) + /auth/google/callback.
+      redirectUri:
+        process.env.GOOGLE_REDIRECT_URI ||
+        ((process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, "") +
+          "/auth/google/callback"),
+      // Optional: restrict logins to a Google Workspace domain (extra guard
+      // on top of the agent allowlist).
+      hostedDomain: process.env.GOOGLE_HOSTED_DOMAIN || null,
+    },
+    twoFactor: {
+      enabled: process.env.TWO_FACTOR_ENABLED !== "false",
+      verifyServiceSid: process.env.TWILIO_VERIFY_SERVICE_SID || null,
+    },
+    // Allowlist mapping verified Google emails -> Twilio identity + MFA target.
+    // AGENT_DIRECTORY is a JSON array, e.g.:
+    // [{"email":"a@wit.com","identity":"marisol.vega","name":"Marisol Vega",
+    //   "mfaChannel":"sms","phone":"+14805550100"}]
+    agents: parseAgentDirectory(process.env.AGENT_DIRECTORY),
+  },
 };
+
+function parseAgentDirectory(raw) {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (err) {
+    console.warn(`⚠️  AGENT_DIRECTORY is not valid JSON — no agents loaded: ${err.message}`);
+    return [];
+  }
+}
 
 // Build an absolute webhook URL Twilio can reach.
 // Throws at call time if PUBLIC_BASE_URL is not set, so the misconfiguration

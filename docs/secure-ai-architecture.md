@@ -71,7 +71,7 @@ time. Build these regardless of whether a formal HIPAA program is pursued.
 |---|---|---|
 | 1 | **Data minimization** | Don't capture what you don't need: Twilio `<Pay>` for cards (never recorded), pause transcription during sensitive segments, redact PII/PHI at the STT layer before text is stored or sent to the LLM. |
 | 2 | **Encryption everywhere** | TLS 1.2+ in transit; AES-256 at rest via AWS KMS (RDS, S3, EBS); SuiteCRM DB on encrypted RDS. |
-| 3 | **Least-privilege access + MFA** | IAM least-privilege; **SSO + MFA** for agents/admins; role-based record access in SuiteCRM; no shared logins. ⚠️ **Current gap:** the softphone trusts an `identity` query param — replace with authenticated SSO before production (already flagged as a TODO in `routes/token.js`). |
+| 3 | **Least-privilege access + MFA** | IAM least-privilege; **SSO + MFA** for agents/admins; role-based record access in SuiteCRM; no shared logins. ✅ **Implemented** for the app: Google OAuth + Twilio Verify 2FA, an agent allowlist, and signed httpOnly session cookies now gate the agent page, the Twilio token endpoint, and the WebSocket — identity comes from the session, not a URL param (see README → Authentication). Still to do at the cloud layer: IAM least-privilege + SuiteCRM role-based access. |
 | 4 | **Audit logging** | CloudTrail (infra) + SuiteCRM access logs: who accessed which customer record, when. Retain logs per policy. |
 | 5 | **Retention minimization** | Transcripts are in-memory only and dropped after recap (already true); set a recording-retention policy (PCI recordings default to 1 year); Claude via Bedrock keeps data in-account / Anthropic direct = 30-day. |
 | 6 | **Network isolation** | Private subnets, security groups, VPC endpoints/PrivateLink for Bedrock/S3; public ingress only for Twilio webhooks/Media Streams, behind WAF + TLS. |
@@ -212,8 +212,10 @@ handling.
       records regardless.
 - [ ] Confirm GLBA Safeguards Rule + applicable state NAIC data-security
       obligations (written security program, IR plan, vendor oversight).
-- [ ] Replace the softphone `identity` query param with authenticated SSO + MFA
-      (Control #3 — current access-control gap).
+- [x] Replace the softphone `identity` query param with authenticated SSO + MFA
+      (Control #3) — done: Google OAuth + Twilio Verify 2FA + session cookies.
+- [ ] Provision the Google OAuth client, Twilio Verify service, `SESSION_SECRET`,
+      and `AGENT_DIRECTORY` for each environment.
 - [ ] Twilio edition that includes the BAA (Security vs Enterprise) + enable PCI mode.
 - [ ] Deepgram: self-hosted vs managed-with-BAA decision (cost vs ops).
 - [ ] Bedrock vs direct Anthropic API for the LLM (both BAA-capable).

@@ -1,22 +1,16 @@
 import { Router } from "express";
 import { generateVoiceToken } from "../twilio.js";
-import { config } from "../config.js";
+import { requireAuth } from "../auth/middleware.js";
 
 export const tokenRouter = Router();
 
-// GET /token?identity=marisol.vega
-// In production, derive identity from the authenticated user (SSO) instead
-// of trusting a query param.
-// TODO(prod): replace this param-based identity with SSO — derive identity
-// from the authenticated session so callers cannot choose their own identity.
-tokenRouter.get("/token", (req, res) => {
-  const rawIdentity = req.query.identity;
-  if (rawIdentity !== undefined && typeof rawIdentity !== "string") {
-    return res.status(400).json({ error: "identity must be a single string value" });
-  }
-  const identity = (rawIdentity || config.defaultAgentIdentity).trim();
+// GET /token
+// Identity is derived from the authenticated session (requireAuth), never from
+// a client-supplied value — an agent cannot mint a token for someone else.
+tokenRouter.get("/token", requireAuth, (req, res) => {
+  const identity = req.agent.identity;
   if (!identity) {
-    return res.status(400).json({ error: "identity must not be empty" });
+    return res.status(403).json({ error: "no identity for this account" });
   }
   try {
     const token = generateVoiceToken(identity);
