@@ -29,6 +29,42 @@ export const config = {
   },
   defaultAgentIdentity: process.env.DEFAULT_AGENT_IDENTITY || "agent",
   databaseUrl: process.env.DATABASE_URL || null,
+
+  // ─── SuiteCRM V8 REST API (OAuth2) ───────────────────────
+  // Feature is optional: if baseUrl/clientId/secret are unset, the CRM
+  // integration no-ops (screen-pop + recap silently skip) so the phone
+  // keeps working. SuiteCRM 7.10+ exposes the V8 JSON:API at /Api/V8.
+  suitecrm: {
+    baseUrl: (process.env.SUITECRM_BASE_URL || "").replace(/\/$/, ""),
+    clientId: process.env.SUITECRM_CLIENT_ID || null,
+    clientSecret: process.env.SUITECRM_CLIENT_SECRET || null,
+    // Password grant (recommended for a trusted server-to-server agent user).
+    username: process.env.SUITECRM_USERNAME || null,
+    password: process.env.SUITECRM_PASSWORD || null,
+    // Deep-link base used by the agent UI to open a record in SuiteCRM.
+    // Defaults to baseUrl if unset.
+    uiUrl: (process.env.SUITECRM_UI_URL || process.env.SUITECRM_BASE_URL || "").replace(/\/$/, ""),
+  },
+
+  // ─── Anthropic (Claude) — real-time coaching + call recap ─
+  // Optional: if apiKey is unset, coaching + recap silently skip.
+  // Recap uses the high-quality default; coaching can be pointed at a
+  // lower-latency model (e.g. claude-haiku-4-5) since cues are time-sensitive.
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || null,
+    model: process.env.ANTHROPIC_MODEL || "claude-opus-4-8",
+    coachingModel:
+      process.env.ANTHROPIC_COACHING_MODEL ||
+      process.env.ANTHROPIC_MODEL ||
+      "claude-opus-4-8",
+  },
+
+  // ─── AI feature flags ─────────────────────────────────────
+  coachingEnabled: process.env.COACHING_ENABLED !== "false",
+  recapEnabled: process.env.RECAP_ENABLED !== "false",
+  // Minimum ms between coaching LLM calls per call, to bound cost/latency
+  // when the transcript is chatty.
+  coachingThrottleMs: Number(process.env.COACHING_THROTTLE_MS) || 6000,
 };
 
 // Build an absolute webhook URL Twilio can reach.

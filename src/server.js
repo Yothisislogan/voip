@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import twilio from "twilio";
@@ -8,6 +9,7 @@ import { config } from "./config.js";
 import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
 import { recordingRouter } from "./routes/recording.js";
+import { attachAgentWss } from "./realtime/ws.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,10 +33,15 @@ app.use(tokenRouter);
 app.use(twilioWebhook, voiceRouter);
 app.use(twilioWebhook, recordingRouter);
 
-app.listen(config.port, () => {
+// Single HTTP server shared by Express and the agent WebSocket channel.
+const server = http.createServer(app);
+attachAgentWss(server);
+
+server.listen(config.port, () => {
   console.log(`\u260E\uFE0F  WIT Connect telephony running on http://localhost:${config.port}`);
-  console.log(`   Softphone:  http://localhost:${config.port}/softphone.html`);
+  console.log(`   Softphone:       http://localhost:${config.port}/softphone.html`);
+  console.log(`   Agent workspace: http://localhost:${config.port}/agent.html?identity=marisol.vega`);
   if (!config.publicBaseUrl) {
-    console.log("   \u26A0\uFE0F  PUBLIC_BASE_URL is empty \u2014 webhooks/recordings need a public URL (use ngrok).");
+    console.log("   \u26A0\uFE0F  PUBLIC_BASE_URL is empty \u2014 webhooks/recordings/transcription need a public URL (use ngrok).");
   }
 });
