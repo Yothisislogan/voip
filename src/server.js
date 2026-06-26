@@ -10,6 +10,7 @@ import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
 import { recordingRouter } from "./routes/recording.js";
 import { authRouter } from "./routes/auth.js";
+import { aiRouter } from "./routes/ai.js";
 import { messagingRouter, messagingWebhookRouter } from "./routes/messaging.js";
 import { pageGate } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
@@ -54,6 +55,7 @@ const twilioWebhook = config.publicBaseUrl
   : (_req, _res, next) => next(); // dev-only bypass when no public URL is set
 
 app.use(tokenRouter);
+app.use(aiRouter);
 app.use(messagingRouter); // agent send + conversation list (requireAuth inside)
 app.use(twilioWebhook, voiceRouter);
 app.use(twilioWebhook, recordingRouter);
@@ -64,14 +66,14 @@ const server = http.createServer(app);
 attachAgentWss(server);
 
 server.listen(config.port, () => {
-  console.log(`\u260E\uFE0F  WIT Connect telephony running on http://localhost:${config.port}`);
+  console.log(`☎️  WIT Connect telephony running on http://localhost:${config.port}`);
   console.log(`   Agent workspace: http://localhost:${config.port}/agent.html`);
   if (!config.auth.required) {
-    console.log("   \u26A0\uFE0F  AUTH_REQUIRED=false \u2014 login is BYPASSED (dev only). Never use in production.");
+    console.log("   ⚠️  AUTH_REQUIRED=false — login is BYPASSED (dev only). Never use in production.");
   } else if (!config.auth.sessionSecret) {
-    console.log("   \u26A0\uFE0F  SESSION_SECRET is not set \u2014 login cannot issue sessions. Set it before use.");
+    console.log("   ⚠️  SESSION_SECRET is not set — login cannot issue sessions. Set it before use.");
   }
   if (!config.publicBaseUrl) {
-    console.log("   \u26A0\uFE0F  PUBLIC_BASE_URL is empty \u2014 webhooks/recordings/transcription need a public URL (use ngrok).");
+    console.log("   ⚠️  PUBLIC_BASE_URL is empty — webhooks/recordings/transcription need a public URL (use ngrok).");
   }
 });
