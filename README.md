@@ -204,10 +204,16 @@ own identity.
 3. **Secrets:** `SESSION_SECRET` = `openssl rand -hex 32`.
 4. **Allowlist:** fill `AGENT_DIRECTORY` (see `.env.example`).
 
-### Local dev
+### Local dev / testing without Google
 
-Set `AUTH_REQUIRED=false` to bypass login and inject `DEV_IDENTITY` — **dev
-only**, and the server prints a loud warning. Never use it in production.
+Two options, both **dev-only** (remove before production):
+
+- **`DEV_LOGIN_ENABLED=true`** — keeps auth on, but the login page shows a
+  "Continue as developer" field that signs you in as any identity, skipping
+  Google + 2FA. Good for testing the real session flow (e.g. on Render) before
+  Google OAuth is configured. Needs `SESSION_SECRET` set.
+- **`AUTH_REQUIRED=false`** — bypasses auth entirely and injects `DEV_IDENTITY`;
+  no login step at all. The server prints a loud warning.
 
 ## Still required before production (planning doc §10.1)
 

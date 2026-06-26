@@ -18,6 +18,38 @@ export const authRouter = Router();
 
 const STATE_COOKIE = "wit_oauth_state";
 
+// ── Login-page capabilities (public) — lets login.html adapt the UI ──
+authRouter.get("/auth/config", (_req, res) => {
+  res.json({
+    google: googleConfigured(),
+    devLogin: config.auth.devLoginEnabled,
+    twoFactor: twoFactorEnforced(),
+  });
+});
+
+// ── Developer login (temporary, flag-gated) ──
+// Issues a full session for a chosen identity, skipping Google + 2FA.
+// Enabled only when DEV_LOGIN_ENABLED=true. Remove before production.
+authRouter.post("/auth/dev", (req, res) => {
+  if (!config.auth.devLoginEnabled) {
+    return res.redirect("/login?error=dev_disabled");
+  }
+  const identity = (req.body.identity || config.auth.devIdentity || "").trim();
+  if (!identity) return res.redirect("/login?error=dev_no_identity");
+
+  // Use the allowlisted display name if this identity matches an agent.
+  const agent = (config.auth.agents || []).find((a) => a.identity === identity);
+  const { token, ttl } = issueSession({
+    email: agent?.email || `${identity}@dev.local`,
+    identity,
+    name: agent?.name || `${identity} (dev login)`,
+    level: "full",
+  });
+  console.warn(`⚠️  DEV LOGIN used for identity "${identity}" — disable DEV_LOGIN_ENABLED in production.`);
+  res.setHeader("Set-Cookie", cookieHeader(cookieName, token, ttl));
+  res.redirect("/agent.html");
+});
+
 // ── Start Google OAuth ──
 authRouter.get("/auth/google", (req, res) => {
   if (!googleConfigured()) {

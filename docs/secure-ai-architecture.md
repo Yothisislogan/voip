@@ -217,6 +217,8 @@ handling.
       (Control #3) — done: Google OAuth + Twilio Verify 2FA + session cookies.
 - [ ] Provision the Google OAuth client, Twilio Verify service, `SESSION_SECRET`,
       and `AGENT_DIRECTORY` for each environment.
+- [ ] Disable the temporary bypasses before production: `DEV_LOGIN_ENABLED=false`
+      (the "Continue as developer" path) and `AUTH_REQUIRED=true`.
 - [ ] Twilio edition that includes the BAA (Security vs Enterprise) + enable PCI mode.
 - [ ] Deepgram: self-hosted vs managed-with-BAA decision (cost vs ops).
 - [ ] Bedrock vs direct Anthropic API for the LLM (both BAA-capable).

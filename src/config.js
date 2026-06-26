@@ -81,6 +81,10 @@ export const config = {
     // bypasses login and injects DEV_IDENTITY. Never do this in production.
     required: process.env.AUTH_REQUIRED !== "false",
     devIdentity: process.env.DEV_IDENTITY || "marisol.vega",
+    // Temporary developer login: when true, /auth/dev issues a full session for
+    // a chosen identity WITHOUT Google or 2FA. Off by default; opt-in for testing
+    // and remove before production. Keeps auth "on" (unlike AUTH_REQUIRED=false).
+    devLoginEnabled: process.env.DEV_LOGIN_ENABLED === "true",
     // HMAC secret for the signed session cookie (JWT). Required when auth is on.
     sessionSecret: process.env.SESSION_SECRET || null,
     cookieName: process.env.SESSION_COOKIE_NAME || "wit_session",

@@ -25,10 +25,22 @@
     <h1>WIT Connect</h1>
     <p class="sub">Agent sign-in</p>
     <div id="err" class="err" style="display:none"></div>
-    <a class="google" href="/auth/google">
+    <a class="google" id="googleBtn" href="/auth/google">
       <svg class="g" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.1 0 24 0 14.6 0 6.4 5.4 2.5 13.3l7.8 6c1.9-5.6 7.1-9.8 13.7-9.8z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-4 6.8-9.9 6.8-17.4z"/><path fill="#FBBC05" d="M10.3 28.3c-.5-1.4-.7-2.9-.7-4.3s.3-2.9.7-4.3l-7.8-6C.9 16.9 0 20.3 0 24s.9 7.1 2.5 10.3l7.8-6z"/><path fill="#34A853" d="M24 48c6.1 0 11.3-2 15-5.5l-7.3-5.7c-2 1.4-4.7 2.3-7.7 2.3-6.6 0-11.8-4.2-13.7-9.8l-7.8 6C6.4 42.6 14.6 48 24 48z"/></svg>
       Sign in with Google
     </a>
+
+    <!-- Temporary developer login (shown only when DEV_LOGIN_ENABLED=true) -->
+    <form id="devForm" method="POST" action="/auth/dev" style="display:none;margin-top:14px">
+      <div style="font-size:11px;color:var(--mute);text-align:left;margin-bottom:6px">Developer login (temporary)</div>
+      <input name="identity" placeholder="agent identity (e.g. marisol.vega)"
+        style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-size:14px" />
+      <button type="submit"
+        style="width:100%;margin-top:8px;padding:11px;border:none;border-radius:10px;background:var(--ink);color:#fff;font-weight:600;cursor:pointer">
+        Continue as developer
+      </button>
+    </form>
+
     <div class="foot">Access is limited to authorized agents. A second factor is required.</div>
   </div>
 <script>
@@ -38,10 +50,22 @@
     bad_state: "Sign-in expired or was tampered with. Try again.",
     auth_failed: "Sign-in failed. Please try again.",
     session_expired: "Your session expired. Please sign in again.",
-    "2fa_send_failed": "Couldn't send your verification code. Try again."
+    "2fa_send_failed": "Couldn't send your verification code. Try again.",
+    dev_disabled: "Developer login is disabled.",
+    dev_no_identity: "Enter an identity for developer login."
   };
   const e = new URLSearchParams(location.search).get("error");
   if (e) { const box = document.getElementById("err"); box.textContent = errs[e] || "Sign-in error."; box.style.display = "block"; }
+
+  // Adapt the page to what's configured on the server.
+  fetch("/auth/config").then(r => r.json()).then(cfg => {
+    if (!cfg.google) {
+      const g = document.getElementById("googleBtn");
+      g.style.opacity = ".5"; g.style.pointerEvents = "none";
+      g.title = "Google sign-in not configured";
+    }
+    if (cfg.devLogin) document.getElementById("devForm").style.display = "block";
+  }).catch(() => {});
 </script>
 </body>
 </html>
