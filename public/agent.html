@@ -56,6 +56,17 @@
   .recap-field{margin:8px 0;font-size:14px}
   .recap-field b{display:block;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--mute);margin-bottom:2px}
   ul{margin:4px 0;padding-left:18px}
+  /* messages */
+  .convlist{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .convchip{font-size:12px;padding:6px 10px;border-radius:99px;background:var(--paper);border:1px solid var(--line);cursor:pointer}
+  .convchip.active{background:#E2F4FC;border-color:#BCE4F5;color:var(--deep);font-weight:600}
+  .convchip .unread{display:inline-block;min-width:16px;height:16px;line-height:16px;text-align:center;font-size:10px;background:var(--red);color:#fff;border-radius:99px;margin-left:6px}
+  .thread{max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+  .bubble{max-width:80%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.35}
+  .bubble.customer{align-self:flex-start;background:var(--paper)}
+  .bubble.agent{align-self:flex-end;background:#E2F4FC;color:var(--ink)}
+  .replyform{display:flex;gap:8px}
+  .replyform input{flex:1;padding:11px;border:1px solid var(--line);border-radius:12px;font-size:14px}
 </style>
 </head>
 <body>
@@ -103,6 +114,16 @@
         <h2>Live Coaching</h2>
         <div id="senti" class="senti"></div>
         <div id="cues" aria-live="polite"><div class="empty">Coaching cues appear here during the call.</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Messages</h2>
+        <div id="convList" class="convlist"><div class="empty">No conversations yet. Inbound texts appear here.</div></div>
+        <div id="thread" class="thread"></div>
+        <form id="replyForm" class="replyform hidden">
+          <input id="replyText" placeholder="Type a reply…" autocomplete="off" />
+          <button type="submit" class="btn call" style="flex:0 0 auto;padding:0 16px">Send</button>
+        </form>
       </div>
 
       <div class="card hidden" id="recapCard">
@@ -229,6 +250,80 @@ function renderRecap(msg){
     <div class="senti">${msg.savedToCrm ? "✓ Saved to ERPNext" : "Not saved to CRM (CRM disabled or contact not found)"}</div>`;
 }
 
+// ── Messages ──
+const convos = new Map(); // conversationId -> {conversationId, channel, customerRef, contact, messages:[], unread}
+let activeConvo = null;
+
+function convLabel(c){ return (c.contact && c.contact.fullName) || c.customerRef || c.conversationId; }
+
+function renderConvList(){
+  const el = $("convList");
+  const list = [...convos.values()].sort((a,b)=>(b.lastAt||0)-(a.lastAt||0));
+  if (!list.length){ el.innerHTML = `<div class="empty">No conversations yet. Inbound texts appear here.</div>`; return; }
+  el.innerHTML = "";
+  for (const c of list){
+    const chip = document.createElement("div");
+    chip.className = "convchip" + (c.conversationId===activeConvo ? " active":"");
+    chip.innerHTML = esc(convLabel(c)) + (c.unread ? `<span class="unread">${c.unread}</span>` : "");
+    chip.onclick = () => selectConvo(c.conversationId);
+    el.appendChild(chip);
+  }
+}
+function renderThread(){
+  const el = $("thread");
+  const c = activeConvo && convos.get(activeConvo);
+  if (!c){ el.innerHTML = ""; $("replyForm").classList.add("hidden"); return; }
+  $("replyForm").classList.remove("hidden");
+  el.innerHTML = "";
+  for (const m of c.messages){
+    const b = document.createElement("div");
+    b.className = "bubble " + (m.from==="agent"?"agent":"customer");
+    b.textContent = m.text;
+    el.appendChild(b);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+function selectConvo(id){
+  activeConvo = id;
+  const c = convos.get(id); if (c) c.unread = 0;
+  renderConvList(); renderThread();
+}
+function ingestMessage(msg){
+  let c = convos.get(msg.conversationId);
+  if (!c){ c = { conversationId: msg.conversationId, channel: msg.channel, customerRef: msg.customerRef, contact: msg.contact||null, messages: [], unread: 0 }; convos.set(msg.conversationId, c); }
+  if (msg.contact) c.contact = msg.contact;
+  c.messages.push({ from: msg.from, text: msg.text });
+  c.lastAt = Date.now();
+  if (msg.from === "customer" && activeConvo !== msg.conversationId) c.unread = (c.unread||0)+1;
+  if (!activeConvo) activeConvo = msg.conversationId;
+  renderConvList();
+  if (activeConvo === msg.conversationId) renderThread();
+}
+async function loadConversations(){
+  try {
+    const r = await fetch("/messaging/conversations", { credentials:"same-origin" });
+    if (!r.ok) return;
+    const { conversations } = await r.json();
+    for (const c of conversations){ convos.set(c.conversationId, { ...c, unread:0 }); }
+    if (!activeConvo && conversations[0]) activeConvo = conversations[0].conversationId;
+    renderConvList(); renderThread();
+  } catch { /* messaging may be disabled */ }
+}
+$("replyForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("replyText").value.trim();
+  if (!text || !activeConvo) return;
+  $("replyText").value = "";
+  try {
+    await fetch("/messaging/send", {
+      method:"POST", credentials:"same-origin",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ conversationId: activeConvo, text })
+    });
+    // The echo arrives over the WS (from:"agent") and renders the bubble.
+  } catch { /* ignore */ }
+});
+
 function connectWS(){
   const proto = location.protocol === "https:" ? "wss" : "ws";
   // Identity comes from the session cookie sent on the upgrade — no URL param.
@@ -244,6 +339,8 @@ function connectWS(){
     } else if (msg.type === "recap") {
       if (msg.contact) renderCRM(msg.contact, null);
       renderRecap(msg);
+    } else if (msg.type === "message") {
+      ingestMessage(msg);
     }
   };
   ws.onclose = () => setTimeout(connectWS, 3000); // auto-reconnect
@@ -261,6 +358,7 @@ async function showWhoami(){
 showWhoami();
 initDevice();
 connectWS();
+loadConversations();
 </script>
 </body>
 </html>

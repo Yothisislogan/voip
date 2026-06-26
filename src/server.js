@@ -10,6 +10,7 @@ import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
 import { recordingRouter } from "./routes/recording.js";
 import { authRouter } from "./routes/auth.js";
+import { messagingRouter, messagingWebhookRouter } from "./routes/messaging.js";
 import { pageGate } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
 
@@ -53,8 +54,10 @@ const twilioWebhook = config.publicBaseUrl
   : (_req, _res, next) => next(); // dev-only bypass when no public URL is set
 
 app.use(tokenRouter);
+app.use(messagingRouter); // agent send + conversation list (requireAuth inside)
 app.use(twilioWebhook, voiceRouter);
 app.use(twilioWebhook, recordingRouter);
+app.use(twilioWebhook, messagingWebhookRouter); // provider inbound webhook (signed)
 
 // Single HTTP server shared by Express and the agent WebSocket channel.
 const server = http.createServer(app);

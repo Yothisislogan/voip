@@ -125,18 +125,19 @@ export async function findContactByPhone(rawPhone) {
 }
 
 /**
- * Write the recap as a Communication on the contact's/lead's timeline.
- * Returns the new Communication name, or null.
+ * Create a Communication on a contact's/lead's timeline. Generic over channel:
+ * `medium` is "Phone" | "Chat" | "Email" | "SMS", `direction` is "Received" |
+ * "Sent". Returns the new Communication name, or null.
  */
-export async function writeRecapNote({ contact, subject, description }) {
+export async function createCommunication({ contact, subject, content, medium = "Phone", direction = "Received" }) {
   if (!crmEnabled) return null;
   try {
     const doc = {
       communication_type: "Communication",
-      communication_medium: "Phone",
-      sent_or_received: "Received",
-      subject: (subject || "Call recap").slice(0, 140),
-      content: description || "",
+      communication_medium: medium,
+      sent_or_received: direction,
+      subject: (subject || "Interaction").slice(0, 140),
+      content: content || "",
       ...(contact?.doctype && contact?.id
         ? { reference_doctype: contact.doctype, reference_name: contact.id }
         : {}),
@@ -144,9 +145,37 @@ export async function writeRecapNote({ contact, subject, description }) {
     const created = await apiCreate("Communication", doc);
     return created?.name || null;
   } catch (err) {
-    console.error("writeRecapNote failed:", err.message);
+    console.error("createCommunication failed:", err.message);
     return null;
   }
+}
+
+/**
+ * Write the call recap as a Phone Communication on the record's timeline.
+ * Returns the new Communication name, or null.
+ */
+export async function writeRecapNote({ contact, subject, description }) {
+  return createCommunication({
+    contact,
+    subject: subject || "Call recap",
+    content: description,
+    medium: "Phone",
+    direction: "Received",
+  });
+}
+
+/**
+ * Log one chat message (or a thread summary) as a Chat Communication on the
+ * record's timeline. `direction` is "Received" (from customer) or "Sent".
+ */
+export async function logChatMessage({ contact, subject, content, direction = "Received" }) {
+  return createCommunication({
+    contact,
+    subject: subject || "Message",
+    content,
+    medium: "Chat",
+    direction,
+  });
 }
 
 /**

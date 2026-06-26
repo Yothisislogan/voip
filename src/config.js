@@ -36,6 +36,20 @@ export const config = {
   defaultAgentIdentity: process.env.DEFAULT_AGENT_IDENTITY || "agent",
   databaseUrl: process.env.DATABASE_URL || null,
 
+  // ─── Messaging (SMS today, Apple Messages for Business when approved) ──
+  // Unified, provider-agnostic messaging. Today: Twilio Conversations (SMS,
+  // WhatsApp). Apple Messages for Business plugs in as another channel once an
+  // Apple-approved MSP is live. Disabled gracefully if unconfigured.
+  messaging: {
+    enabled: process.env.MESSAGING_ENABLED !== "false",
+    provider: (process.env.MESSAGING_PROVIDER || "twilio_conversations").toLowerCase(),
+    // Twilio Conversations service that owns the conversations/webhooks.
+    conversationsServiceSid: process.env.TWILIO_CONVERSATIONS_SERVICE_SID || null,
+    // Author label used on our outbound messages, so inbound webhooks can tell
+    // customer messages from our own echoes.
+    businessAuthor: process.env.MESSAGING_BUSINESS_AUTHOR || "wit-connect",
+  },
+
   // ─── ERPNext (Frappe) REST API ───────────────────────────
   // Feature is optional: if baseUrl/apiKey/apiSecret are unset, the CRM
   // integration no-ops (screen-pop + recap silently skip) so the phone keeps

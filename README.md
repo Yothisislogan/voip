@@ -165,6 +165,37 @@ npm test   # node --test: phone normalization, transcript buffering,
 - With `ANTHROPIC_API_KEY` / ERPNext unset, confirm the phone still places and
   receives calls normally (features silently skip).
 
+## Messaging (SMS now, Apple Messages for Business later)
+
+A provider-agnostic messaging channel that surfaces customer text threads in the
+agent workspace, screen-pops the customer from ERPNext, and logs the
+conversation to their CRM timeline — reusing the same WebSocket + ERPNext
+plumbing as voice. Today it runs on **Twilio Conversations** (SMS/WhatsApp);
+**Apple Messages for Business (AMB)** plugs in as another channel once an
+Apple-approved MSP is live (see `docs/messaging-integration-contract.md`).
+
+```
+customer text ─▶ provider (Twilio Conversations / Apple MSP)
+        │  onMessageAdded webhook
+        ▼
+POST /messaging/inbound ─▶ normalize ─▶ conversation buffer ─▶ ERPNext screen-pop + log
+        │                                                              │
+        └─▶ WebSocket /ws/agent ("message")  ◀── agent reply via POST /messaging/send
+```
+
+- **Channel-pluggable:** `src/messaging/providers.js` holds the adapters; add an
+  Apple-MSP adapter there without touching the core. Selected by `MESSAGING_PROVIDER`.
+- **Screen-pop nuance:** SMS exposes the phone (so ERPNext lookup works); **AMB
+  uses an opaque Apple id**, so AMB threads identify the customer via an in-chat
+  step rather than phone.
+- **Routing (MVP):** inbound threads route to `DEFAULT_AGENT_IDENTITY`. Replace
+  with a queue/availability model later.
+- **Same PII posture:** chat carries customer PII and flows into ERPNext, so the
+  HIPAA-aligned controls in `docs/secure-ai-architecture.md` extend here.
+
+Setup: create a **Twilio Conversations** service, set `TWILIO_CONVERSATIONS_SERVICE_SID`,
+and point its `onMessageAdded` webhook at `{PUBLIC_BASE_URL}/messaging/inbound`.
+
 ## Authentication (Google OAuth + 2FA)
 
 The app pages, the Twilio token endpoint, and the agent WebSocket all require an
