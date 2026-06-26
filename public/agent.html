@@ -6,170 +6,76 @@
 <title>WIT Connect — Agent Workspace</title>
 <script src="https://sdk.twilio.com/js/voice/releases/2.12.3/twilio.min.js"></script>
 <style>
-  :root{
-    --blue:#00AEEF; --purple:#7C3AED; --ink:#17181C; --muted:#6B7280;
-    --soft:#F7F7F8; --line:#E6E7EB; --panel:#FFFFFF; --green:#39D353;
-    --red:#FF6868; --amber:#F5A623; --shadow:0 18px 44px rgba(17,24,39,.08);
-  }
-  *{box-sizing:border-box;font-family:Inter,'IBM Plex Sans',-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-  body{margin:0;background:#fff;color:var(--ink);height:100vh;overflow:hidden}
-  button,input{font:inherit}
-  .hidden{display:none!important}
-
-  .app{height:100vh;display:grid;grid-template-columns:320px 1fr;background:#fff}
-  .rail{border-right:1px solid var(--line);background:#FAFAFB;display:flex;flex-direction:column;min-width:0}
-  .rail-top{height:58px;display:flex;align-items:center;gap:16px;padding:0 16px;border-bottom:1px solid var(--line)}
-  .brand{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(0,174,239,.25)}
-  .icon-row{display:flex;gap:18px;color:#555;font-size:20px;margin-left:auto}
-  .icon{width:24px;height:24px;border:none;background:transparent;cursor:pointer;color:#555;display:flex;align-items:center;justify-content:center}
-  .icon:hover{color:var(--purple)}
-  .nav{padding:14px 0;overflow:auto}
-  .nav-item{display:flex;align-items:center;gap:12px;padding:9px 18px;font-size:15px;color:#27272A;cursor:pointer}
-  .nav-item:hover{background:#F1F1F4}
-  .nav-ico{width:20px;text-align:center;color:#333}
-  .section{margin-top:16px;padding:0 18px 6px;font-size:12px;font-weight:800;color:#52525B;display:flex;align-items:center;gap:8px}
-  .team-link{padding:6px 18px;color:#6D38FF;font-size:13px;font-weight:800}
-  .person{display:flex;align-items:center;gap:10px;padding:8px 18px;font-size:15px}
-  .avatar{width:29px;height:29px;border-radius:99px;background:#A7F3D0;display:grid;place-items:center;font-weight:800;color:#14532D;position:relative;flex:0 0 auto}
-  .avatar.blue{background:#BAE6FD;color:#075985}.avatar.gray{background:#E5E7EB;color:#374151}.avatar.pink{background:#FBCFE8;color:#831843}
-  .avatar:after{content:"";position:absolute;right:-1px;bottom:0;width:9px;height:9px;background:#52D43A;border:2px solid #FAFAFB;border-radius:99px}
-  .dept{display:flex;align-items:center;gap:12px;padding:9px 18px;font-size:15px;color:#444}
-  .swatch{width:14px;height:14px;border-radius:3px;background:#E5E7EB}.swatch.ga{background:#E5E7EB}.swatch.uk{background:#FED76A}.swatch.codys{background:#F5488F}.swatch.nv{background:#FF9AC8}
-  .badge{margin-left:auto;background:#A78BFA;color:#fff;border-radius:99px;padding:3px 9px;font-size:12px;font-weight:800}
-  .channels{margin-top:6px;border-top:1px solid var(--line);padding-top:8px}
-
-  .main{min-width:0;display:grid;grid-template-rows:58px 1fr;background:#fff}
-  .topbar{height:58px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:18px}
-  .arrows{display:flex;gap:16px;font-size:24px;color:#777}
-  .search{width:min(540px,42vw);height:34px;border:none;border-radius:99px;background:#F0F0F2;display:flex;align-items:center;gap:10px;padding:0 16px;color:#777;margin:0 auto}
-  .search input{border:none;outline:none;background:transparent;width:100%;font-weight:700;color:#666;text-align:center}
-  .status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;white-space:nowrap}
-  .dot{width:9px;height:9px;border-radius:99px;background:#B8BBC2}.dot.on{background:var(--green)}
-  .profile{width:30px;height:30px;border-radius:50%;background:#D1FAE5;color:#065F46;font-weight:800;display:grid;place-items:center;position:relative}
-  .profile:after{content:"";position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border:2px solid #fff;border-radius:99px;background:#39D353}
-  .logout{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 10px;font-size:12px;cursor:pointer}
-
-  .workspace{display:grid;grid-template-columns:minmax(0,1fr) 360px;height:calc(100vh - 58px);min-height:0}
-  .conversation{display:grid;grid-template-rows:auto auto auto 1fr auto;border-right:1px solid var(--line);min-width:0;min-height:0}
-  .titlebar{height:55px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;font-weight:900}
-  .compose-row{height:56px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:64px 1fr;align-items:center;padding:0 20px;gap:10px}
-  .label{font-size:15px;color:#333}.from-select{font-weight:700}.from-select small{font-weight:500;color:#444}.caret{margin-left:12px;font-size:12px}.to-input{border:none;outline:none;font-size:16px;color:#222;width:100%}.to-input::placeholder{color:#8A8A8E}
-  .thread-area{min-height:0;overflow:auto;padding:18px 20px;display:flex;flex-direction:column;background:#fff}
-  .empty-state{margin:auto;text-align:center;color:#1F1F23;max-width:520px}
-  .empty-state h1{font-size:28px;margin:0 0 10px;font-weight:900}.empty-state p{font-size:18px;margin:0;color:#27272A}.empty-art{width:178px;height:130px;margin:46px auto 0;position:relative}.blob{position:absolute;left:40px;top:18px;width:108px;height:88px;border:4px solid #111;border-radius:42% 58% 47% 53%;transform:rotate(-9deg)}.bubble-dot{position:absolute;right:10px;top:36px;width:30px;height:30px;border-radius:50%;background:#C4B5FD}.laptop{position:absolute;left:74px;top:68px;width:58px;height:35px;border:3px solid #111;border-radius:5px;transform:skew(-10deg)}.arm{position:absolute;left:76px;top:52px;width:54px;height:4px;background:#111;transform:rotate(0deg);border-radius:99px}.hand{position:absolute;left:122px;top:22px;width:38px;height:4px;background:#111;transform:rotate(-72deg);border-radius:99px}
-  .thread{display:flex;flex-direction:column;gap:8px;min-height:0}.thread:not(:empty)+.empty-state{display:none}
-  .bubble{max-width:70%;padding:10px 13px;border-radius:15px;font-size:14px;line-height:1.35}.bubble.customer{align-self:flex-start;background:#F2F2F4}.bubble.agent{align-self:flex-end;background:#DFF4FC;color:#06202D}
-  .composer{border-top:1px solid var(--line);padding:12px 18px 14px;background:#fff}.replyform{display:flex;align-items:center;gap:12px;border:1px solid #D8DAE0;border-radius:9px;min-height:58px;padding:8px 10px}.replyform input{flex:1;border:none;outline:none;font-size:15px}.send{width:34px;height:34px;border:none;background:#fff;color:#777;font-size:22px;cursor:pointer}.send:hover{color:var(--purple)}.tools{display:flex;gap:12px;color:#555;font-size:18px}.toolbtn{border:none;background:transparent;cursor:pointer;color:#555}
-
-  .sidepanel{background:#FBFBFC;display:flex;flex-direction:column;min-height:0}.panel-head{padding:16px 18px;border-bottom:1px solid var(--line);font-weight:900;display:flex;align-items:center;justify-content:space-between}.panel-scroll{padding:16px;overflow:auto}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,.03);margin-bottom:14px}.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}.display{background:#F3F4F6;border-radius:11px;padding:12px;font-family:'IBM Plex Mono',monospace;font-size:22px;text-align:center;min-height:48px;overflow:hidden}.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}.key{height:42px;border:none;border-radius:10px;background:#F3F4F6;font-size:18px;font-weight:800;cursor:pointer}.key:hover{background:#E8EAEE}.actions{display:flex;gap:8px;margin-top:10px}.btn{border:none;border-radius:10px;padding:11px 13px;font-weight:900;cursor:pointer}.btn.call{background:var(--green);color:#053B18}.btn.hang{background:var(--red);color:#fff}.btn.ghost{background:#F3F4F6;color:#222}.incoming{margin-top:10px;padding:10px;border-radius:12px;background:#E8F7FD;border:1px solid #BDEBFA;text-align:center;display:none}.incoming.show{display:block}.log{font-size:12px;color:var(--muted);min-height:16px;text-align:center;margin-top:8px}.empty{color:var(--muted);font-size:13px}.crm-name{font-size:18px;font-weight:900}.crm-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-bottom:1px solid var(--line)}.crm-row span:first-child{color:var(--muted)}.crm-link{display:inline-block;margin-top:10px;color:#007EAE;text-decoration:none;font-weight:800;font-size:13px}.pill{display:inline-block;font-size:11px;font-weight:800;padding:4px 9px;border-radius:99px;background:#E2F4FC;color:#007EAE}.pill.new{background:#FFF1DB;color:#9A6400}.senti{font-size:12px;color:var(--muted);margin-top:4px}.cue{padding:10px;border-radius:12px;background:#F3F4F6;border-left:4px solid var(--blue);font-size:13px;margin-bottom:8px}.cue.high{border-left-color:var(--red);background:#FFF2F2}.cue .lens{display:block;font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted);margin-bottom:4px}.recap-field{font-size:13px;margin:8px 0}.recap-field b{display:block;font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}ul{margin:5px 0;padding-left:18px}.convlist{display:flex;flex-direction:column;gap:7px}.convchip{font-size:13px;padding:9px 10px;border-radius:10px;background:#F3F4F6;border:1px solid var(--line);cursor:pointer}.convchip.active{background:#E2F4FC;border-color:#BCE4F5;color:#007EAE;font-weight:800}.convchip .unread{float:right;min-width:18px;height:18px;line-height:18px;text-align:center;font-size:10px;background:var(--red);color:#fff;border-radius:99px}
-
-  @media(max-width:1000px){.app{grid-template-columns:1fr}.rail{display:none}.workspace{grid-template-columns:1fr}.sidepanel{display:none}.search{width:45vw}.empty-state h1{font-size:24px}.empty-state p{font-size:15px}}
+  :root{--blue:#00AEEF;--purple:#7C3AED;--ink:#17181C;--muted:#6B7280;--line:#E6E7EB;--paper:#FAFAFB;--green:#39D353;--red:#FF6868;--card:#fff}
+  *{box-sizing:border-box;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  body{margin:0;height:100vh;overflow:hidden;color:var(--ink);background:#fff}
+  button,input{font:inherit}.hidden{display:none!important}
+  .app{height:100vh;display:grid;grid-template-columns:320px 1fr}.rail{background:var(--paper);border-right:1px solid var(--line);overflow:auto}.rail-top{height:58px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--line)}.brand{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-weight:900;display:grid;place-items:center}.icon-row{display:flex;gap:14px;margin-left:auto}.icon{border:0;background:transparent;font-size:20px;cursor:pointer;color:#555}.icon:hover,.nav-item:hover,.person:hover,.dept:hover{color:var(--purple);background:#F1F1F4}.nav{padding:14px 0}.nav-item,.person,.dept{display:flex;align-items:center;gap:12px;padding:9px 18px;font-size:15px;cursor:pointer}.nav-ico{width:20px;text-align:center}.section{margin-top:16px;padding:0 18px 6px;font-size:12px;font-weight:800;color:#52525B}.team-link{padding:6px 18px;color:#6D38FF;font-size:13px;font-weight:800;cursor:pointer}.avatar{width:29px;height:29px;border-radius:99px;background:#A7F3D0;display:grid;place-items:center;font-weight:800;color:#14532D;position:relative}.avatar.blue{background:#BAE6FD;color:#075985}.avatar:after{content:"";position:absolute;right:-1px;bottom:0;width:9px;height:9px;background:#52D43A;border:2px solid var(--paper);border-radius:99px}.swatch{width:14px;height:14px;border-radius:3px;background:#E5E7EB}.swatch.uk{background:#FED76A}.swatch.codys{background:#F5488F}.swatch.nv{background:#FF9AC8}.badge{margin-left:auto;background:#A78BFA;color:#fff;border-radius:99px;padding:3px 9px;font-size:12px;font-weight:800}.channels{margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
+  .main{display:grid;grid-template-rows:58px 1fr;min-width:0}.topbar{height:58px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:18px;padding:0 20px}.arrows{display:flex;gap:16px;font-size:24px;color:#777}.top-action{cursor:pointer}.search{width:min(540px,42vw);height:34px;border-radius:99px;background:#F0F0F2;display:flex;align-items:center;gap:10px;padding:0 16px;margin:0 auto;color:#777}.search input{border:0;outline:0;background:transparent;width:100%;text-align:center;font-weight:700;color:#666}.status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;white-space:nowrap}.dot{width:9px;height:9px;border-radius:99px;background:#B8BBC2}.dot.on{background:var(--green)}.logout{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 10px;font-size:12px;cursor:pointer}.profile{width:30px;height:30px;border-radius:50%;background:#D1FAE5;color:#065F46;font-weight:800;display:grid;place-items:center;position:relative}.profile:after{content:"";position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border:2px solid #fff;border-radius:99px;background:#39D353}
+  .workspace{height:calc(100vh - 58px);display:grid;grid-template-columns:minmax(0,1fr) 360px;min-height:0}.conversation{display:grid;grid-template-rows:55px 56px 56px 1fr auto;border-right:1px solid var(--line);min-height:0}.titlebar{height:55px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;font-weight:900}.compose-row{height:56px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:64px 1fr;align-items:center;padding:0 20px;gap:10px}.label{font-size:15px}.from-select{font-weight:700}.from-select small{font-weight:500;color:#444}.to-input{border:0;outline:0;font-size:16px;min-height:24px}.thread-area{min-height:0;overflow:auto;padding:18px 20px;display:flex;flex-direction:column}.thread{display:flex;flex-direction:column;gap:8px}.thread:not(:empty)+.empty-state{display:none}.empty-state{margin:auto;text-align:center}.empty-state h1{font-size:28px;margin:0 0 10px}.empty-state p{font-size:18px;margin:0}.empty-art{width:178px;height:130px;margin:46px auto 0;position:relative}.blob{position:absolute;left:40px;top:18px;width:108px;height:88px;border:4px solid #111;border-radius:42% 58% 47% 53%;transform:rotate(-9deg)}.bubble-dot{position:absolute;right:10px;top:36px;width:30px;height:30px;border-radius:50%;background:#C4B5FD}.laptop{position:absolute;left:74px;top:68px;width:58px;height:35px;border:3px solid #111;border-radius:5px;transform:skew(-10deg)}.bubble{max-width:72%;padding:10px 13px;border-radius:15px;font-size:14px;line-height:1.35}.bubble.customer{align-self:flex-start;background:#F2F2F4}.bubble.agent{align-self:flex-end;background:#DFF4FC}.composer{border-top:1px solid var(--line);padding:12px 18px 14px}.replyform{display:flex;align-items:center;gap:12px;border:1px solid #D8DAE0;border-radius:9px;min-height:58px;padding:8px 10px}.replyform input{flex:1;border:0;outline:0;font-size:15px}.send,.toolbtn{border:0;background:#fff;color:#555;cursor:pointer}.send{width:34px;height:34px;font-size:22px}.send:hover,.toolbtn:hover{color:var(--purple)}.tools{display:flex;gap:12px;font-size:18px}
+  .sidepanel{background:#FBFBFC;display:flex;flex-direction:column;min-height:0}.panel-head{padding:16px 18px;border-bottom:1px solid var(--line);font-weight:900;display:flex;justify-content:space-between}.panel-scroll{padding:16px;overflow:auto}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.key{height:42px;border:0;border-radius:10px;background:#F3F4F6;font-size:18px;font-weight:800;cursor:pointer}.key:hover{background:#E8EAEE}.actions{display:flex;gap:8px;margin-top:10px}.btn{border:0;border-radius:10px;padding:11px 13px;font-weight:900;cursor:pointer}.btn.call{background:var(--green);color:#053B18}.btn.hang{background:var(--red);color:#fff}.btn.ghost{background:#F3F4F6;color:#222}.btn:disabled{opacity:.5;cursor:not-allowed}.incoming{margin-top:10px;padding:10px;border-radius:12px;background:#E8F7FD;border:1px solid #BDEBFA;text-align:center;display:none}.incoming.show{display:block}.log{font-size:12px;color:var(--muted);min-height:18px;text-align:center;margin-top:8px}.empty{color:var(--muted);font-size:13px}.crm-name{font-size:18px;font-weight:900}.crm-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-bottom:1px solid var(--line)}.crm-row span:first-child{color:var(--muted)}.crm-link{display:inline-block;margin-top:10px;color:#007EAE;text-decoration:none;font-weight:800;font-size:13px}.pill{display:inline-block;font-size:11px;font-weight:800;padding:4px 9px;border-radius:99px;background:#E2F4FC;color:#007EAE}.pill.new{background:#FFF1DB;color:#9A6400}.senti{font-size:12px;color:var(--muted);margin-top:4px}.cue{padding:10px;border-radius:12px;background:#F3F4F6;border-left:4px solid var(--blue);font-size:13px;margin-bottom:8px}.cue.high{border-left-color:var(--red);background:#FFF2F2}.cue .lens{display:block;font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted);margin-bottom:4px}.recap-field{font-size:13px;margin:8px 0}.recap-field b{display:block;font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}.convlist{display:flex;flex-direction:column;gap:7px}.convchip{font-size:13px;padding:9px 10px;border-radius:10px;background:#F3F4F6;border:1px solid var(--line);cursor:pointer}.convchip.active{background:#E2F4FC;border-color:#BCE4F5;color:#007EAE;font-weight:800}.convchip .unread{float:right;min-width:18px;height:18px;line-height:18px;text-align:center;font-size:10px;background:var(--red);color:#fff;border-radius:99px}
+  @media(max-width:1000px){.app{grid-template-columns:1fr}.rail{display:none}.workspace{grid-template-columns:1fr}.sidepanel{display:none}.search{width:45vw}}
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="rail">
-    <div class="rail-top">
-      <div class="brand">W</div>
-      <div class="icon-row"><button class="icon" title="Calls">☎</button><button class="icon" title="Messages">□</button><button class="icon" title="Video">▭</button></div>
-    </div>
+    <div class="rail-top"><div class="brand">W</div><div class="icon-row"><button class="icon" data-focus="calls" title="Calls">☎</button><button class="icon" data-focus="messages" title="Messages">□</button><button class="icon" data-focus="messages" title="Video">▭</button></div></div>
     <nav class="nav">
-      <div class="nav-item"><span class="nav-ico">#</span><span>All Channels</span></div>
-      <div class="nav-item"><span class="nav-ico">▤</span><span>Threads</span></div>
-      <div class="nav-item"><span class="nav-ico">◷</span><span>Scheduled</span></div>
-      <div class="section">⌄ Coaching Teams</div>
-      <div class="team-link">Monitor all Coaching Teams</div>
+      <div class="nav-item" data-title="All Channels"><span class="nav-ico">#</span><span>All Channels</span></div>
+      <div class="nav-item" data-title="Threads"><span class="nav-ico">▤</span><span>Threads</span></div>
+      <div class="nav-item" data-title="Scheduled"><span class="nav-ico">◷</span><span>Scheduled</span></div>
+      <div class="section">⌄ Coaching Teams</div><div class="team-link" data-title="Coaching Teams">Monitor all Coaching Teams</div>
       <div class="section">⌄ Favorites</div>
-      <div class="person"><span class="avatar">C</span><span>Chase Stewart</span></div>
-      <div class="person"><span class="avatar blue">L</span><span>Laura Trigg</span></div>
-      <div class="person"><span class="avatar blue">M</span><span>Mario Mercado</span></div>
-      <div class="person"><span class="avatar blue">S</span><span>Sergio Hernandez</span></div>
+      <div class="person" data-person="Chase Stewart" data-number="+17025550101"><span class="avatar">C</span><span>Chase Stewart</span></div>
+      <div class="person" data-person="Laura Trigg" data-number="+17025550102"><span class="avatar blue">L</span><span>Laura Trigg</span></div>
+      <div class="person" data-person="Mario Mercado" data-number="+17025550103"><span class="avatar blue">M</span><span>Mario Mercado</span></div>
+      <div class="person" data-person="Sergio Hernandez" data-number="+17025550104"><span class="avatar blue">S</span><span>Sergio Hernandez</span></div>
       <div class="section">⌄ Departments</div>
-      <div class="dept"><span class="swatch ga"></span><span>GA</span></div>
-      <div class="dept"><span class="swatch uk"></span><span>UK</span></div>
-      <div class="dept"><span class="swatch ga"></span><b>MIRAGE</b><span class="badge">1</span></div>
-      <div class="dept"><span class="swatch codys"></span><span>CODYS</span></div>
-      <div class="dept"><span class="swatch ga"></span><span>Norfolk</span></div>
-      <div class="dept"><span class="swatch nv"></span><span>NV</span></div>
-      <div class="dept"><span class="swatch ga"></span><span>WIT</span></div>
-      <div class="channels">
-        <div class="section">⌄ Channels</div>
-        <div class="nav-item"><span class="nav-ico">#</span><b>leads</b></div>
-      </div>
+      <div class="dept" data-title="GA"><span class="swatch"></span><span>GA</span></div><div class="dept" data-title="UK"><span class="swatch uk"></span><span>UK</span></div><div class="dept" data-title="MIRAGE"><span class="swatch"></span><b>MIRAGE</b><span class="badge">1</span></div><div class="dept" data-title="CODYS"><span class="swatch codys"></span><span>CODYS</span></div><div class="dept" data-title="Norfolk"><span class="swatch"></span><span>Norfolk</span></div><div class="dept" data-title="NV"><span class="swatch nv"></span><span>NV</span></div><div class="dept" data-title="WIT"><span class="swatch"></span><span>WIT</span></div>
+      <div class="channels"><div class="section">⌄ Channels</div><div class="nav-item" data-title="# leads"><span class="nav-ico">#</span><b>leads</b></div></div>
     </nav>
   </aside>
-
   <main class="main">
-    <header class="topbar">
-      <div class="arrows"><span>‹</span><span>›</span><span>↻</span></div>
-      <div class="search"><span>⌕</span><input aria-label="Search" placeholder="Search WIT Connect" /></div>
-      <div class="status"><span class="dot" id="dot"></span><span id="state">Connecting…</span><span id="who"></span></div>
-      <form method="POST" action="/logout" style="margin:0"><button class="logout" type="submit">Log out</button></form>
-      <div class="profile">L</div>
-    </header>
-
+    <header class="topbar"><div class="arrows"><span class="top-action" id="backBtn">‹</span><span class="top-action" id="forwardBtn">›</span><span class="top-action" id="refreshBtn">↻</span></div><div class="search"><span>⌕</span><input id="searchBox" aria-label="Search" placeholder="Search WIT Connect" /></div><div class="status"><span class="dot" id="dot"></span><span id="state">Connecting…</span><span id="who"></span></div><form method="POST" action="/logout" style="margin:0"><button class="logout" type="submit">Log out</button></form><div class="profile">L</div></header>
     <section class="workspace">
-      <div class="conversation">
-        <div class="titlebar">New Message</div>
-        <div class="compose-row"><div class="label">From:</div><div class="from-select">Logan Wease <small>WIT Connect</small><span class="caret">▼</span></div></div>
-        <div class="compose-row"><div class="label">To:</div><div id="display" class="to-input" contenteditable="true" role="textbox" aria-label="To phone number">+1</div></div>
-        <div class="thread-area">
-          <div id="thread" class="thread"></div>
-          <div class="empty-state">
-            <h1>What’s on your mind?</h1>
-            <p>Enter a name or number to start chatting</p>
-            <div class="empty-art"><div class="blob"></div><div class="bubble-dot"></div><div class="laptop"></div><div class="arm"></div><div class="hand"></div></div>
-          </div>
-        </div>
-        <div class="composer">
-          <form id="replyForm" class="replyform">
-            <div class="tools"><button class="toolbtn" type="button">▧</button><button class="toolbtn" type="button">☺</button><button class="toolbtn" type="button">↩</button></div>
-            <input id="replyText" placeholder="New message" autocomplete="off" />
-            <button type="submit" class="send" title="Send">▷</button>
-          </form>
-        </div>
-      </div>
-
-      <aside class="sidepanel">
-        <div class="panel-head"><span>Agent Tools</span><span>⋯</span></div>
-        <div class="panel-scroll">
-          <div class="card">
-            <h2>Softphone</h2>
-            <div class="pad" id="pad"></div>
-            <div class="incoming" id="incoming">
-              <div style="font-weight:800" id="callerId">Incoming call</div>
-              <div class="actions"><button class="btn call" id="accept">Accept</button><button class="btn hang" id="reject">Decline</button></div>
-            </div>
-            <div class="actions"><button class="btn call" id="callBtn">Call</button><button class="btn hang hidden" id="hangBtn">End</button><button class="btn ghost hidden" id="muteBtn">Mute</button></div>
-            <div class="log" id="log"></div>
-          </div>
-          <div class="card" aria-live="polite"><h2>Customer</h2><div id="crm"><div class="empty">No active call yet.</div></div></div>
-          <div class="card"><h2>Messages</h2><div id="convList" class="convlist"><div class="empty">No conversations yet.</div></div></div>
-          <div class="card"><h2>Live Coaching</h2><div id="senti" class="senti"></div><div id="cues" aria-live="polite"><div class="empty">Coaching cues appear during a call.</div></div></div>
-          <div class="card hidden" id="recapCard"><h2>Call Recap</h2><div id="recap"></div></div>
-        </div>
-      </aside>
+      <div class="conversation"><div class="titlebar" id="titlebar">New Message</div><div class="compose-row"><div class="label">From:</div><div class="from-select">Logan Wease <small>WIT Connect</small><span style="margin-left:12px;font-size:12px">▼</span></div></div><div class="compose-row"><div class="label">To:</div><div id="display" class="to-input" contenteditable="true" role="textbox" aria-label="To phone number">+1</div></div><div class="thread-area" id="threadArea"><div id="thread" class="thread"></div><div class="empty-state"><h1>What’s on your mind?</h1><p>Enter a name or number to start chatting</p><div class="empty-art"><div class="blob"></div><div class="bubble-dot"></div><div class="laptop"></div></div></div></div><div class="composer"><form id="replyForm" class="replyform"><div class="tools"><button class="toolbtn" id="attachBtn" type="button">▧</button><button class="toolbtn" id="emojiBtn" type="button">☺</button><button class="toolbtn" id="undoBtn" type="button">↩</button></div><input id="replyText" placeholder="New message" autocomplete="off" /><button type="submit" class="send" title="Send">▷</button></form></div></div>
+      <aside class="sidepanel"><div class="panel-head"><span>Agent Tools</span><span>⋯</span></div><div class="panel-scroll"><div class="card" id="softphoneCard"><h2>Softphone</h2><div class="pad" id="pad"></div><div class="incoming" id="incoming"><div style="font-weight:800" id="callerId">Incoming call</div><div class="actions"><button class="btn call" id="accept">Accept</button><button class="btn hang" id="reject">Decline</button></div></div><div class="actions"><button class="btn call" id="callBtn">Call</button><button class="btn hang hidden" id="hangBtn">End</button><button class="btn ghost hidden" id="muteBtn">Mute</button></div><div class="log" id="log"></div></div><div class="card" aria-live="polite"><h2>Customer</h2><div id="crm"><div class="empty">No active call yet.</div></div></div><div class="card"><h2>Messages</h2><div id="convList" class="convlist"><div class="empty">No conversations yet.</div></div></div><div class="card"><h2>Live Coaching</h2><div id="senti" class="senti"></div><div id="cues" aria-live="polite"><div class="empty">Coaching cues appear during a call.</div></div></div><div class="card hidden" id="recapCard"><h2>Call Recap</h2><div id="recap"></div></div></div></aside>
     </section>
   </main>
 </div>
-
 <script>
 const $ = (id) => document.getElementById(id);
-const display = $("display"), log = (m) => ($("log").textContent = m);
-let device, activeCall = null, muted = false;
+const display = $("display");
+const log = (m) => { const el = $("log"); if (el) el.textContent = m; };
+let device = null;
+let activeCall = null;
+let muted = false;
+let deviceReady = false;
+const convos = new Map();
+let activeConvo = null;
+
+function cleanNumber(value) { return String(value || "").replace(/[^+0-9*#]/g, ""); }
+function setDisplay(value) { display.textContent = value || "+1"; }
+function getTo() { return cleanNumber(display.textContent.trim()); }
+function setTitle(text) { $("titlebar").textContent = text || "New Message"; }
+function setState(text, online){ $("state").textContent = text; $("dot").classList.toggle("on", !!online); }
+function inCallUI(on){ $("callBtn").classList.toggle("hidden",on); $("hangBtn").classList.toggle("hidden",!on); $("muteBtn").classList.toggle("hidden",!on); }
+function flash(text){ log(text); }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
 
 "123456789*0#".split("").forEach((d) => {
   const b = document.createElement("button");
-  b.className = "key"; b.textContent = d;
-  b.onclick = () => {
-    if (activeCall) { activeCall.sendDigits(d); return; }
-    display.textContent = display.textContent + d;
-  };
+  b.className = "key";
+  b.type = "button";
+  b.textContent = d;
+  b.addEventListener("click", () => {
+    if (activeCall && typeof activeCall.sendDigits === "function") { activeCall.sendDigits(d); flash("Sent digit " + d); return; }
+    setDisplay(getTo() + d);
+    flash("Dial pad ready");
+  });
   $("pad").appendChild(b);
 });
-
-function setState(text, online){ $("state").textContent = text; $("dot").classList.toggle("on", !!online); }
-function inCallUI(on){ $("callBtn").classList.toggle("hidden",on); $("hangBtn").classList.toggle("hidden",!on); $("muteBtn").classList.toggle("hidden",!on); }
 
 async function fetchToken() {
   const res = await fetch("/token", { credentials: "same-origin" });
@@ -177,159 +83,128 @@ async function fetchToken() {
   if (!res.ok) throw new Error(`token HTTP ${res.status}`);
   return res.json();
 }
-
 async function initDevice() {
   try {
+    if (!window.Twilio || !Twilio.Device) throw new Error("Twilio Voice SDK did not load");
     const { token, identity: id } = await fetchToken();
     device = new Twilio.Device(token, { codecPreferences: ["opus", "pcmu"] });
-    device.on("registered", () => setState(`Ready · ${id}`, true));
-    device.on("error", (e) => { setState("Device error", false); log(e.message); });
-    device.on("tokenWillExpire", async () => {
-      try { device.updateToken((await fetchToken()).token); }
-      catch { setState("Token refresh failed — reload", false); }
-    });
-    device.on("incoming", (call) => {
-      activeCall = call;
-      $("callerId").textContent = "Incoming · " + (call.parameters.From || "unknown");
-      $("incoming").classList.add("show");
-      call.on("disconnect", endCleanup);
-      call.on("cancel", endCleanup);
-    });
+    device.on("registered", () => { deviceReady = true; setState(`Ready · ${id}`, true); flash("Softphone ready"); });
+    device.on("error", (e) => { deviceReady = false; setState("Device error", false); flash(e.message || "Twilio device error"); });
+    device.on("tokenWillExpire", async () => { try { device.updateToken((await fetchToken()).token); } catch { setState("Token refresh failed", false); } });
+    device.on("incoming", (call) => { activeCall = call; $("callerId").textContent = "Incoming · " + (call.parameters.From || "unknown"); $("incoming").classList.add("show"); call.on("disconnect", endCleanup); call.on("cancel", endCleanup); });
     await device.register();
-  } catch {
-    setState("Could not connect", false);
-    log("Check Twilio environment variables.");
+  } catch (err) {
+    deviceReady = false;
+    setState("Demo mode", false);
+    flash("Softphone not ready yet. Add Twilio env vars to place calls.");
   }
 }
+function endCleanup(){ activeCall = null; muted = false; inCallUI(false); $("incoming").classList.remove("show"); $("muteBtn").textContent = "Mute"; flash("Call ended"); }
+$("callBtn").addEventListener("click", async () => {
+  const to = getTo();
+  if (to.length < 4) { flash("Enter a phone number first."); display.focus(); return; }
+  if (!deviceReady || !device) { flash("Softphone not connected. Check Twilio env vars, then redeploy."); return; }
+  try {
+    flash("Dialing " + to + "...");
+    activeCall = await device.connect({ params: { To: to } });
+    activeCall.on("accept", () => { inCallUI(true); flash("Connected"); });
+    activeCall.on("disconnect", endCleanup);
+  } catch (err) { flash(err.message || "Call failed"); }
+});
+$("hangBtn").addEventListener("click", () => activeCall ? activeCall.disconnect() : flash("No active call."));
+$("muteBtn").addEventListener("click", () => { if (!activeCall) { flash("No active call to mute."); return; } muted = !muted; activeCall.mute(muted); $("muteBtn").textContent = muted ? "Unmute" : "Mute"; });
+$("accept").addEventListener("click", () => { if (!activeCall) return; activeCall.accept(); inCallUI(true); $("incoming").classList.remove("show"); });
+$("reject").addEventListener("click", () => { if (activeCall) activeCall.reject(); endCleanup(); });
 
-function endCleanup(){ activeCall=null; muted=false; inCallUI(false); $("incoming").classList.remove("show"); $("muteBtn").textContent="Mute"; log("Call ended"); }
-
-$("callBtn").onclick = async () => {
-  const to = display.textContent.trim();
-  if (!device || to.length < 4) return;
-  log("Dialing " + to + "…");
-  activeCall = await device.connect({ params: { To: to } });
-  activeCall.on("accept", () => { inCallUI(true); log("Connected"); });
-  activeCall.on("disconnect", endCleanup);
-};
-$("hangBtn").onclick = () => activeCall && activeCall.disconnect();
-$("muteBtn").onclick = () => { if(!activeCall)return; muted=!muted; activeCall.mute(muted); $("muteBtn").textContent = muted?"Unmute":"Mute"; };
-$("accept").onclick = () => { if(!activeCall)return; activeCall.accept(); inCallUI(true); $("incoming").classList.remove("show"); };
-$("reject").onclick = () => { activeCall && activeCall.reject(); endCleanup(); };
-
+function row(k,v){ return `<div class="crm-row"><span>${k}</span><span>${esc(v||"")}</span></div>`; }
 function renderCRM(contact, phone){
   const el = $("crm");
-  if (!contact) {
-    el.innerHTML = `<div class="crm-name">New caller</div><div class="senti">${phone || ""}</div><span class="pill new">Not in CRM</span>`;
-    return;
-  }
+  if (!contact) { el.innerHTML = `<div class="crm-name">New caller</div><div class="senti">${esc(phone || "")}</div><span class="pill new">Not in CRM</span>`; return; }
   el.innerHTML = `<div class="crm-name">${esc(contact.fullName)}</div>${contact.accountName ? `<div class="senti">${esc(contact.accountName)}</div>` : ""}<div style="margin-top:10px">${row("Phone", contact.phone)}${contact.email ? row("Email", contact.email) : ""}${contact.title ? row("Title", contact.title) : ""}</div>${contact.url ? `<a class="crm-link" href="${contact.url}" target="_blank" rel="noopener">Open in ERPNext →</a>` : ""}`;
 }
-function row(k,v){ return `<div class="crm-row"><span>${k}</span><span>${esc(v||"")}</span></div>`; }
-function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
-
 function renderCues(coaching){
-  const el = $("cues");
   $("senti").textContent = coaching.customerSentiment ? `Customer sentiment: ${coaching.customerSentiment}` : "";
   if (!coaching.cues || !coaching.cues.length) return;
-  el.innerHTML = "";
-  for (const c of coaching.cues) {
-    const div = document.createElement("div");
-    div.className = "cue" + (c.priority === "high" ? " high" : "");
-    div.innerHTML = `<span class="lens">${esc((c.lens||"").replace("_"," "))}</span><span class="txt">${esc(c.text)}</span>`;
-    el.appendChild(div);
-  }
+  const el = $("cues"); el.innerHTML = "";
+  for (const c of coaching.cues) { const div = document.createElement("div"); div.className = "cue" + (c.priority === "high" ? " high" : ""); div.innerHTML = `<span class="lens">${esc((c.lens||"").replace("_"," "))}</span><span class="txt">${esc(c.text)}</span>`; el.appendChild(div); }
 }
-
 function renderRecap(msg){
   const r = msg.recap; if (!r) return;
   $("recapCard").classList.remove("hidden");
-  const list = (arr) => arr && arr.length ? `<ul>${arr.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>` : "<div class='empty'>None</div>";
+  const list = (arr) => arr && arr.length ? `<ul>${arr.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "<div class='empty'>None</div>";
   $("recap").innerHTML = `<div class="recap-field"><b>Summary</b>${esc(r.summary)}</div><div class="recap-field"><b>Outcome</b>${esc((r.outcome||"").replace(/_/g," "))} · sentiment ${esc(r.customerSentiment||"?")}</div><div class="recap-field"><b>Products discussed</b>${list(r.productsDiscussed)}</div><div class="recap-field"><b>Objections</b>${list(r.objections)}</div><div class="recap-field"><b>Next steps</b>${list(r.nextSteps)}</div>${r.followUpDate ? `<div class="recap-field"><b>Follow-up</b>${esc(r.followUpDate)}</div>` : ""}<div class="senti">${msg.savedToCrm ? "Saved to ERPNext" : "Not saved to CRM"}</div>`;
 }
-
-const convos = new Map();
-let activeConvo = null;
 function convLabel(c){ return (c.contact && c.contact.fullName) || c.customerRef || c.conversationId; }
 function renderConvList(){
   const el = $("convList");
   const list = [...convos.values()].sort((a,b)=>(b.lastAt||0)-(a.lastAt||0));
   if (!list.length){ el.innerHTML = `<div class="empty">No conversations yet.</div>`; return; }
   el.innerHTML = "";
-  for (const c of list){
-    const chip = document.createElement("div");
-    chip.className = "convchip" + (c.conversationId===activeConvo ? " active":"");
-    chip.innerHTML = esc(convLabel(c)) + (c.unread ? `<span class="unread">${c.unread}</span>` : "");
-    chip.onclick = () => selectConvo(c.conversationId);
-    el.appendChild(chip);
-  }
+  for (const c of list) { const chip = document.createElement("div"); chip.className = "convchip" + (c.conversationId === activeConvo ? " active" : ""); chip.innerHTML = esc(convLabel(c)) + (c.unread ? `<span class="unread">${c.unread}</span>` : ""); chip.onclick = () => selectConvo(c.conversationId); el.appendChild(chip); }
 }
 function renderThread(){
   const el = $("thread");
   const c = activeConvo && convos.get(activeConvo);
   if (!c){ el.innerHTML = ""; return; }
   el.innerHTML = "";
-  for (const m of c.messages){
-    const b = document.createElement("div");
-    b.className = "bubble " + (m.from==="agent"?"agent":"customer");
-    b.textContent = m.text;
-    el.appendChild(b);
-  }
-  el.scrollTop = el.scrollHeight;
+  for (const m of c.messages){ const b = document.createElement("div"); b.className = "bubble " + (m.from === "agent" ? "agent" : "customer"); b.textContent = m.text; el.appendChild(b); }
+  $("threadArea").scrollTop = $("threadArea").scrollHeight;
 }
-function selectConvo(id){ activeConvo = id; const c = convos.get(id); if (c) c.unread = 0; renderConvList(); renderThread(); }
+function selectConvo(id){ activeConvo = id; const c = convos.get(id); if (c) { c.unread = 0; setDisplay(c.customerRef || getTo()); setTitle(convLabel(c)); } renderConvList(); renderThread(); }
+function ensureLocalConversation(){
+  const to = getTo();
+  if (to.length < 4) { flash("Enter a number or choose a favorite first."); display.focus(); return null; }
+  const id = "local:" + to;
+  if (!convos.has(id)) convos.set(id, { conversationId:id, channel:"local", customerRef:to, messages:[], unread:0, lastAt:Date.now() });
+  activeConvo = id; setTitle(to); renderConvList(); return convos.get(id);
+}
 function ingestMessage(msg){
   let c = convos.get(msg.conversationId);
   if (!c){ c = { conversationId: msg.conversationId, channel: msg.channel, customerRef: msg.customerRef, contact: msg.contact||null, messages: [], unread: 0 }; convos.set(msg.conversationId, c); }
   if (msg.contact) c.contact = msg.contact;
-  c.messages.push({ from: msg.from, text: msg.text });
-  c.lastAt = Date.now();
+  c.messages.push({ from: msg.from, text: msg.text }); c.lastAt = Date.now();
   if (msg.from === "customer" && activeConvo !== msg.conversationId) c.unread = (c.unread||0)+1;
   if (!activeConvo) activeConvo = msg.conversationId;
   renderConvList(); if (activeConvo === msg.conversationId) renderThread();
 }
 async function loadConversations(){
-  try {
-    const r = await fetch("/messaging/conversations", { credentials:"same-origin" });
-    if (!r.ok) return;
-    const { conversations } = await r.json();
-    for (const c of conversations){ convos.set(c.conversationId, { ...c, unread:0 }); }
-    if (!activeConvo && conversations[0]) activeConvo = conversations[0].conversationId;
-    renderConvList(); renderThread();
-  } catch {}
+  try { const r = await fetch("/messaging/conversations", { credentials:"same-origin" }); if (!r.ok) return; const { conversations } = await r.json(); for (const c of conversations){ convos.set(c.conversationId, { ...c, unread:0 }); } if (!activeConvo && conversations[0]) activeConvo = conversations[0].conversationId; renderConvList(); renderThread(); } catch {}
 }
 $("replyForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = $("replyText").value.trim();
-  if (!text || !activeConvo) return;
+  if (!text) { flash("Type a message first."); return; }
+  const c = activeConvo && convos.get(activeConvo) ? convos.get(activeConvo) : ensureLocalConversation();
+  if (!c) return;
   $("replyText").value = "";
-  try {
-    await fetch("/messaging/send", { method:"POST", credentials:"same-origin", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ conversationId: activeConvo, text }) });
-  } catch {}
+  c.messages.push({ from:"agent", text }); c.lastAt = Date.now(); renderConvList(); renderThread(); flash("Message added to test thread.");
+  if (!String(c.conversationId).startsWith("local:")) {
+    try { await fetch("/messaging/send", { method:"POST", credentials:"same-origin", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ conversationId: c.conversationId, text }) }); } catch { flash("Local message shown. Server send failed."); }
+  }
 });
 
 function connectWS(){
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws/agent`);
-  ws.onmessage = (ev) => {
-    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type === "screenpop") { renderCRM(msg.contact, msg.phone); $("recapCard").classList.add("hidden"); $("cues").innerHTML = ""; }
-    else if (msg.type === "coaching") renderCues(msg);
-    else if (msg.type === "recap") { if (msg.contact) renderCRM(msg.contact, null); renderRecap(msg); }
-    else if (msg.type === "message") ingestMessage(msg);
-  };
+  ws.onmessage = (ev) => { let msg; try { msg = JSON.parse(ev.data); } catch { return; } if (msg.type === "screenpop") { renderCRM(msg.contact, msg.phone); $("recapCard").classList.add("hidden"); $("cues").innerHTML = ""; } else if (msg.type === "coaching") renderCues(msg); else if (msg.type === "recap") { if (msg.contact) renderCRM(msg.contact, null); renderRecap(msg); } else if (msg.type === "message") ingestMessage(msg); };
   ws.onclose = () => setTimeout(connectWS, 3000);
 }
-
 async function showWhoami(){
-  try {
-    const r = await fetch("/auth/me", { credentials: "same-origin" });
-    if (r.status === 401) { location.href = "/login"; return; }
-    const me = await r.json();
-    $("who").textContent = me.name ? `${me.name}` : (me.identity || "");
-  } catch {}
+  try { const r = await fetch("/auth/me", { credentials: "same-origin" }); if (r.status === 401) { location.href = "/login"; return; } const me = await r.json(); $("who").textContent = me.name ? me.name : (me.identity || ""); } catch {}
 }
 
+document.querySelectorAll("[data-person]").forEach((el) => el.addEventListener("click", () => { setDisplay(el.dataset.number); setTitle(el.dataset.person); flash("Selected " + el.dataset.person); $("replyText").focus(); }));
+document.querySelectorAll("[data-title]").forEach((el) => el.addEventListener("click", () => { setTitle(el.dataset.title); flash(el.dataset.title + " selected"); }));
+document.querySelectorAll("[data-focus]").forEach((el) => el.addEventListener("click", () => { const target = el.dataset.focus; if (target === "calls") { $("softphoneCard").scrollIntoView({block:"start", behavior:"smooth"}); flash("Softphone selected"); } else { $("replyText").focus(); flash("Messages selected"); } }));
+$("attachBtn").addEventListener("click", () => flash("Attachments can be wired next."));
+$("emojiBtn").addEventListener("click", () => { $("replyText").value += " :)"; $("replyText").focus(); });
+$("undoBtn").addEventListener("click", () => { $("replyText").value = $("replyText").value.slice(0, -1); $("replyText").focus(); });
+$("backBtn").addEventListener("click", () => history.back());
+$("forwardBtn").addEventListener("click", () => history.forward());
+$("refreshBtn").addEventListener("click", () => location.reload());
+$("searchBox").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); setTitle("Search: " + e.target.value); flash("Search UI placeholder: " + e.target.value); } });
+
+display.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("replyText").focus(); } });
 showWhoami();
 initDevice();
 connectWS();
