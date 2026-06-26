@@ -1,28 +1,25 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicBedrockMantle } from "@anthropic-ai/bedrock-sdk";
 import { config } from "../config.js";
+import { rulesStructuredCompletion } from "./providers/rules.js";
+import { ollamaStructuredCompletion } from "./providers/ollama.js";
 
 /**
- * Shared Claude client for coaching + recap. Two interchangeable backends:
+ * Shared AI router for coaching + recap.
  *
- *   - "anthropic": direct Anthropic API (needs ANTHROPIC_API_KEY)
- *   - "bedrock":   Amazon Bedrock via the Mantle client (needs AWS_REGION +
- *                  AWS credentials; data stays in your AWS account/region)
+ * Providers:
+ *   - rules:     deterministic local coaching/recap, no API, no GPU
+ *   - ollama:    local/server-hosted LLM with rules fallback
+ *   - anthropic: direct Claude API
+ *   - bedrock:   Claude through Amazon Bedrock
  *
- * Both expose the same `.messages.create` surface, so coach.js / recap.js are
- * backend-agnostic. If the chosen backend isn't configured, `aiEnabled` is false
- * and coaching/recap silently skip — the phone keeps working.
+ * Live call code should never throw because AI is optional. Every provider
+ * returns null or a safe fallback rather than disrupting the phone path.
  */
 
-const backend = config.anthropic.backend === "bedrock" ? "bedrock" : "anthropic";
+const backend = normalizeBackend(config.llm.backend);
 
-/** Bedrock requires an "anthropic." prefix on model IDs; direct API uses bare. */
-export function modelId(bare) {
-  if (backend !== "bedrock") return bare;
-  return bare.startsWith("anthropic.") ? bare : `anthropic.${bare}`;
-}
-
-export let aiEnabled = false;
+export let aiEnabled = backend === "rules" || backend === "ollama";
 export let anthropic = null;
 
 try {
@@ -31,33 +28,56 @@ try {
       anthropic = new AnthropicBedrockMantle({ awsRegion: config.anthropic.awsRegion });
       aiEnabled = true;
       console.log(
-        `🤖 Claude AI enabled via Amazon Bedrock (${config.anthropic.awsRegion}; ` +
-          `recap: ${modelId(config.anthropic.model)}, coaching: ${modelId(config.anthropic.coachingModel)}).`
+        `AI enabled via Amazon Bedrock (recap: ${modelId(config.anthropic.model)}, coaching: ${modelId(config.anthropic.coachingModel)}).`
       );
     } else {
-      console.log("🤖 LLM_BACKEND=bedrock but AWS_REGION is not set — coaching + recap disabled.");
+      console.log("LLM_BACKEND=bedrock but AWS_REGION is not set. Falling back to rules coach.");
+      aiEnabled = true;
     }
-  } else if (config.anthropic.apiKey) {
-    anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
-    aiEnabled = true;
+  } else if (backend === "anthropic") {
+    if (config.anthropic.apiKey) {
+      anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
+      aiEnabled = true;
+      console.log(
+        `AI enabled via Anthropic API (recap: ${config.anthropic.model}, coaching: ${config.anthropic.coachingModel}).`
+      );
+    } else {
+      console.log("LLM_BACKEND=anthropic but ANTHROPIC_API_KEY is not set. Falling back to rules coach.");
+      aiEnabled = true;
+    }
+  } else if (backend === "ollama") {
     console.log(
-      `🤖 Claude AI enabled via Anthropic API (recap: ${config.anthropic.model}, coaching: ${config.anthropic.coachingModel}).`
+      `AI enabled via Ollama (${config.llm.ollama.baseUrl}; coaching: ${config.llm.ollama.coachingModel}; recap: ${config.llm.ollama.recapModel}). Rules fallback is active.`
     );
   } else {
-    console.log("🤖 ANTHROPIC_API_KEY not set — coaching + recap disabled.");
+    console.log("AI enabled via local rules coach. Set LLM_BACKEND=ollama or anthropic for model-backed coaching.");
   }
 } catch (err) {
-  console.error("🤖 Claude client init failed — coaching + recap disabled:", err.message);
+  console.error("AI client init failed; falling back to local rules coach:", err.message);
   anthropic = null;
-  aiEnabled = false;
+  aiEnabled = true;
 }
 
-/**
- * Run a structured (JSON-schema-constrained) Claude request and return the
- * parsed object, or null on any failure. Centralizes error handling so callers
- * never throw into a live-call code path.
- */
-export async function structuredCompletion({
+export function modelId(bare) {
+  if (backend !== "bedrock") return bare;
+  return bare.startsWith("anthropic.") ? bare : `anthropic.${bare}`;
+}
+
+export async function structuredCompletion(args) {
+  if (!aiEnabled) return null;
+
+  if (backend === "rules") return rulesStructuredCompletion(args);
+  if (backend === "ollama") return ollamaStructuredCompletion(args);
+
+  if ((backend === "anthropic" || backend === "bedrock") && anthropic) {
+    const res = await claudeStructuredCompletion(args);
+    return res || rulesStructuredCompletion(args);
+  }
+
+  return rulesStructuredCompletion(args);
+}
+
+async function claudeStructuredCompletion({
   model,
   system,
   user,
@@ -66,7 +86,6 @@ export async function structuredCompletion({
   effort = "medium",
   maxTokens = 1024,
 }) {
-  if (!aiEnabled) return null;
   try {
     const res = await anthropic.messages.create({
       model: modelId(model),
@@ -90,4 +109,11 @@ export async function structuredCompletion({
     console.error("Claude request failed:", err.message);
     return null;
   }
+}
+
+function normalizeBackend(value) {
+  const b = String(value || "rules").toLowerCase();
+  if (["rules", "ollama", "anthropic", "bedrock"].includes(b)) return b;
+  console.warn(`Unknown LLM_BACKEND=${value}; using rules.`);
+  return "rules";
 }
