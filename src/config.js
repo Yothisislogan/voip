@@ -53,11 +53,17 @@ export const config = {
   },
 
   // ─── Anthropic (Claude) — real-time coaching + call recap ─
-  // Optional: if apiKey is unset, coaching + recap silently skip.
-  // Recap uses the high-quality default; coaching can be pointed at a
-  // lower-latency model (e.g. claude-haiku-4-5) since cues are time-sensitive.
+  // Two backends:
+  //   - "anthropic" (default): direct Anthropic API, needs ANTHROPIC_API_KEY.
+  //   - "bedrock": Amazon Bedrock (keeps data in your AWS account/region under
+  //     your BAA). Needs AWS_REGION + AWS credentials (standard AWS chain); no
+  //     ANTHROPIC_API_KEY. Model IDs are auto-prefixed with "anthropic.".
+  // Model IDs are stored bare; coaching can use a lower-latency model since cues
+  // are time-sensitive.
   anthropic: {
+    backend: (process.env.LLM_BACKEND || "anthropic").toLowerCase(),
     apiKey: process.env.ANTHROPIC_API_KEY || null,
+    awsRegion: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || null,
     model: process.env.ANTHROPIC_MODEL || "claude-opus-4-8",
     coachingModel:
       process.env.ANTHROPIC_COACHING_MODEL ||

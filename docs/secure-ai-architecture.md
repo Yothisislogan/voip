@@ -189,11 +189,12 @@ the full migration finishes):
      buffer + `onUtterance` path (unchanged downstream).
    - Files: new `src/realtime/media.js` (audio bridge) + `src/stt/deepgram.js`;
      edit `src/routes/voice.js` (TwiML), retire `/voice/transcription`.
-2. **Claude via Bedrock — switchable by config.**
-   - Add `LLM_BACKEND=bedrock|anthropic`; when `bedrock`, construct
-     `AnthropicBedrockMantle({ awsRegion })` and use `anthropic.claude-…`
-     model IDs; otherwise the current direct client.
+2. ✅ **Claude via Bedrock — switchable by config (DONE).**
+   - `LLM_BACKEND=bedrock|anthropic`; when `bedrock`, constructs
+     `AnthropicBedrockMantle({ awsRegion })` and auto-prefixes model IDs with
+     `anthropic.`; otherwise the direct client. Coaching/recap code unchanged.
    - Files: `src/ai/client.js`, `src/config.js`, `.env.example`.
+   - Remaining: provision Bedrock model access + AWS creds/IAM in the account.
 3. **PCI de-scope hook.**
    - Wrap payment capture in Twilio `<Pay>`; **pause** Media Streams/transcription
      for that segment so card data never enters the AI pipeline.

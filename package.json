@@ -13,6 +13,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.31.0",
     "@anthropic-ai/sdk": "^0.32.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

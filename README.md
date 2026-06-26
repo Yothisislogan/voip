@@ -124,9 +124,16 @@ See `.env.example`. Everything is optional:
   and (recommended) `SUITECRM_USERNAME` / `SUITECRM_PASSWORD`. Create a client in
   SuiteCRM under **Admin → OAuth2 Clients and Tokens → New Password Client** and
   use a dedicated agent user.
-- **Claude** — `ANTHROPIC_API_KEY`. `ANTHROPIC_MODEL` defaults to `claude-opus-4-8`
-  (recap). Real-time cues are latency-sensitive: set `ANTHROPIC_COACHING_MODEL` to
-  a faster model (e.g. `claude-haiku-4-5`) if cue latency matters more than depth.
+- **Claude** — `LLM_BACKEND` selects the backend:
+  - `anthropic` (default): direct API, set `ANTHROPIC_API_KEY`.
+  - `bedrock`: Amazon Bedrock — set `AWS_REGION` + AWS credentials (standard AWS
+    chain); no API key. Keeps prompts/outputs in your AWS account/region under
+    your BAA (see `docs/secure-ai-architecture.md`). Model IDs are auto-prefixed
+    with `anthropic.`.
+  `ANTHROPIC_MODEL` defaults to `claude-opus-4-8` (recap). Real-time cues are
+  latency-sensitive: set `ANTHROPIC_COACHING_MODEL` to a faster model (e.g.
+  `claude-haiku-4-5`) if cue latency matters more than depth. The coaching/recap
+  code is backend-agnostic — only the client construction changes.
 - **Flags** — `COACHING_ENABLED`, `RECAP_ENABLED`, `COACHING_THROTTLE_MS`.
 
 Real-time transcription POSTs to your public URL, so **`PUBLIC_BASE_URL` must be

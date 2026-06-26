@@ -1,24 +1,55 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { AnthropicBedrockMantle } from "@anthropic-ai/bedrock-sdk";
 import { config } from "../config.js";
 
 /**
- * Shared Anthropic (Claude) client for coaching + recap.
+ * Shared Claude client for coaching + recap. Two interchangeable backends:
  *
- * Optional: if ANTHROPIC_API_KEY is unset the client is null and `aiEnabled`
- * is false, so coaching and recap silently skip and the phone keeps working.
+ *   - "anthropic": direct Anthropic API (needs ANTHROPIC_API_KEY)
+ *   - "bedrock":   Amazon Bedrock via the Mantle client (needs AWS_REGION +
+ *                  AWS credentials; data stays in your AWS account/region)
+ *
+ * Both expose the same `.messages.create` surface, so coach.js / recap.js are
+ * backend-agnostic. If the chosen backend isn't configured, `aiEnabled` is false
+ * and coaching/recap silently skip — the phone keeps working.
  */
-export const aiEnabled = Boolean(config.anthropic.apiKey);
 
-export const anthropic = aiEnabled
-  ? new Anthropic({ apiKey: config.anthropic.apiKey })
-  : null;
+const backend = config.anthropic.backend === "bedrock" ? "bedrock" : "anthropic";
 
-if (aiEnabled) {
-  console.log(
-    `🤖 Claude AI enabled (recap: ${config.anthropic.model}, coaching: ${config.anthropic.coachingModel}).`
-  );
-} else {
-  console.log("🤖 ANTHROPIC_API_KEY not set — coaching + recap disabled.");
+/** Bedrock requires an "anthropic." prefix on model IDs; direct API uses bare. */
+export function modelId(bare) {
+  if (backend !== "bedrock") return bare;
+  return bare.startsWith("anthropic.") ? bare : `anthropic.${bare}`;
+}
+
+export let aiEnabled = false;
+export let anthropic = null;
+
+try {
+  if (backend === "bedrock") {
+    if (config.anthropic.awsRegion) {
+      anthropic = new AnthropicBedrockMantle({ awsRegion: config.anthropic.awsRegion });
+      aiEnabled = true;
+      console.log(
+        `🤖 Claude AI enabled via Amazon Bedrock (${config.anthropic.awsRegion}; ` +
+          `recap: ${modelId(config.anthropic.model)}, coaching: ${modelId(config.anthropic.coachingModel)}).`
+      );
+    } else {
+      console.log("🤖 LLM_BACKEND=bedrock but AWS_REGION is not set — coaching + recap disabled.");
+    }
+  } else if (config.anthropic.apiKey) {
+    anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
+    aiEnabled = true;
+    console.log(
+      `🤖 Claude AI enabled via Anthropic API (recap: ${config.anthropic.model}, coaching: ${config.anthropic.coachingModel}).`
+    );
+  } else {
+    console.log("🤖 ANTHROPIC_API_KEY not set — coaching + recap disabled.");
+  }
+} catch (err) {
+  console.error("🤖 Claude client init failed — coaching + recap disabled:", err.message);
+  anthropic = null;
+  aiEnabled = false;
 }
 
 /**
@@ -38,7 +69,7 @@ export async function structuredCompletion({
   if (!aiEnabled) return null;
   try {
     const res = await anthropic.messages.create({
-      model,
+      model: modelId(model),
       max_tokens: maxTokens,
       system,
       output_config: {
