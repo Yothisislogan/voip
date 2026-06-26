@@ -1,0 +1,31 @@
+# Render Blueprint — TEST configuration to unblock the agent workspace.
+#
+# Auth is BYPASSED here (AUTH_REQUIRED=false) so you can reach /agent.html
+# without Google/2FA. This is for testing only — do NOT ship to production
+# like this. For real auth, set AUTH_REQUIRED=true and configure Google +
+# Twilio Verify (see README → Authentication).
+#
+# Voice/messaging/CRM/AI features stay disabled until you add their vars in the
+# Render dashboard (Twilio, ERPNext, AI provider). The app still serves the UI.
+services:
+  - type: web
+    name: agent-workspace
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      # --- Testing access (remove/flip before production) ---
+      - key: AUTH_REQUIRED
+        value: "false"
+      - key: DEV_LOGIN_ENABLED
+        value: "true"
+      - key: SESSION_SECRET
+        generateValue: true
+      # Render injects the service hostname; the app upgrades it to https://.
+      - key: PUBLIC_BASE_URL
+        fromService:
+          type: web
+          name: agent-workspace
+          property: host

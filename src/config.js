@@ -17,9 +17,20 @@ if (missing.length) {
   );
 }
 
+// Render's `fromService property: host` injects a bare hostname (no scheme);
+// normalize to a full https:// URL so webhook building + Secure-cookie detection
+// work. Accepts already-qualified http(s) URLs unchanged.
+function normalizeBaseUrl(v) {
+  const raw = (v || "").trim().replace(/\/$/, "");
+  if (!raw) return "";
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+}
+
 export const config = {
   port: Number(process.env.PORT) || 3000,
-  publicBaseUrl: (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
+  publicBaseUrl: normalizeBaseUrl(process.env.PUBLIC_BASE_URL),
+  // Cross-origin allowlist for browser fetches. Empty = same-origin only
+  // (most secure; the agent UI is served from this same server).
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "")
     .split(",")
     .map((s) => s.trim())
