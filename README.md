@@ -74,6 +74,88 @@ Open **http://localhost:3000/softphone.html?identity=marisol.vega**.
 | `/voice/status` callback | `UPDATE calls` status / answered_at / ended_at / talk_seconds |
 | `/recording/status` callback | `INSERT call_recordings` (consent=disclosed, retention) |
 
+## AI sales assist + SuiteCRM (new)
+
+Three capabilities layer on top of the softphone. All are **optional and
+feature-flagged** — if their keys are unset, the phone works exactly as before.
+
+1. **SuiteCRM screen-pop** — when a call connects, the backend looks up the
+   caller's number in SuiteCRM (V8 JSON:API, OAuth2) and pushes the matching
+   contact (with a deep link) to the agent screen.
+2. **Real-time coaching** — Twilio real-time transcription forks the call audio
+   to `/voice/transcription`; finalized utterances are buffered and fed to Claude,
+   which returns short cues across four lenses (objection handling, compliance
+   disclosures, next-best question, sentiment/pacing) pushed live to the agent.
+3. **End-of-call recap** — when transcription stops, Claude summarizes the full
+   transcript into structured fields and writes a Note + logged Call onto the
+   customer's SuiteCRM contact.
+
+### Architecture
+
+```
+Twilio call ──<Start><Transcription>──▶ POST /voice/transcription ─┐
+                                                                   ├─▶ transcript buffer (per CallSid)
+inbound/outbound ─▶ SuiteCRM V8 lookup ─▶ screen-pop              │
+                                                                   ▼
+Agent browser ◀── WebSocket /ws/agent ◀── coaching cues (Claude) + screen-pop
+                                                                   │
+transcription-stopped ─▶ recap (Claude) ─▶ Note + Call on SuiteCRM contact
+```
+
+The unified **agent workspace** is at `/agent.html?identity=<agent>` — dialer,
+live CRM card, and coaching cues in one screen. The original `/softphone.html`
+is unchanged.
+
+| File | Role |
+| --- | --- |
+| `src/crm/suitecrm.js` | SuiteCRM V8 client (OAuth2, find-contact-by-phone, write Note/Call) |
+| `src/ai/coach.js` / `recap.js` | Claude coaching cues + structured recap |
+| `src/ai/transcript.js` | per-call transcript buffer |
+| `src/realtime/orchestrator.js` | ties transcription → coaching → recap together |
+| `src/realtime/ws.js` / `bus.js` / `sessions.js` | WebSocket push, agent event bus, call registry |
+| `public/agent.html` | unified agent workspace |
+
+### Configuration
+
+See `.env.example`. Everything is optional:
+
+- **SuiteCRM** — `SUITECRM_BASE_URL`, `SUITECRM_CLIENT_ID`, `SUITECRM_CLIENT_SECRET`,
+  and (recommended) `SUITECRM_USERNAME` / `SUITECRM_PASSWORD`. Create a client in
+  SuiteCRM under **Admin → OAuth2 Clients and Tokens → New Password Client** and
+  use a dedicated agent user.
+- **Claude** — `ANTHROPIC_API_KEY`. `ANTHROPIC_MODEL` defaults to `claude-opus-4-8`
+  (recap). Real-time cues are latency-sensitive: set `ANTHROPIC_COACHING_MODEL` to
+  a faster model (e.g. `claude-haiku-4-5`) if cue latency matters more than depth.
+- **Flags** — `COACHING_ENABLED`, `RECAP_ENABLED`, `COACHING_THROTTLE_MS`.
+
+Real-time transcription POSTs to your public URL, so **`PUBLIC_BASE_URL` must be
+set** (ngrok locally) for coaching/recap to run.
+
+### Compliance ⚠️
+
+This adds **AI transcription** on top of call recording. Many US states require
+two-party consent. The inbound greeting now discloses recording **and**
+transcription; ensure your outbound flow and any custom greetings do the same,
+and confirm state-by-state requirements before going live. Transcripts are held
+in process memory only for the duration of a call and dropped after the recap;
+they are not persisted by this app.
+
+### Tests
+
+```bash
+npm test   # node --test: phone normalization, transcript buffering,
+           # recap formatting, speaker mapping, session registry, WS delivery
+```
+
+### What to verify on a live setup
+
+- Place an outbound call from `/agent.html` → a known CRM number; confirm the
+  screen-pop card shows the contact and the deep link opens SuiteCRM.
+- Speak both sides; confirm coaching cues appear within a few seconds.
+- Hang up; confirm a recap renders and a Note appears on the contact in SuiteCRM.
+- With `ANTHROPIC_API_KEY` / SuiteCRM unset, confirm the phone still places and
+  receives calls normally (features silently skip).
+
 ## Still required before production (planning doc §10.1)
 
 This starter does not handle, and a real launch must: Twilio Trust Hub + **A2P 10DLC**
