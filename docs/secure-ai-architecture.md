@@ -1,24 +1,34 @@
 # Secure AI Architecture & HIPAA/PCI Migration Plan
 
 **Status:** Proposed · **Date:** 2026-06-26 · **Owner:** WIT Connect
-**Decision:** Move regulated workloads off Hetzner to a HIPAA-eligible **AWS**
-account; upgrade transcription to **Deepgram** (accuracy + redaction); keep
-**Claude** for coaching/recap, run it via **Amazon Bedrock**; de-scope card
-data via **Twilio `<Pay>`**.
+**Decision:** Build to a **HIPAA-aligned security baseline** (Section 2.1) —
+strong PII protection modeled on HIPAA controls, without necessarily pursuing a
+full formal HIPAA program. Move regulated workloads off Hetzner to a
+HIPAA-eligible **AWS** account; upgrade transcription to **Deepgram** (accuracy +
+redaction); keep **Claude** for coaching/recap, run it via **Amazon Bedrock**;
+de-scope card data via **Twilio `<Pay>`**.
 
-> ⚠️ **Not legal advice.** This is an engineering plan. Confirm HIPAA
+> ⚠️ **Not legal advice.** This is an engineering plan. Confirm regulatory
 > applicability and every BAA/control with qualified compliance counsel before
-> processing real PHI/PCI data.
+> processing real customer data.
 
 ---
 
 ## 1. Context & requirements
 
 - **Goal that started this:** better transcription *accuracy*, with **security
-  as the top priority**.
-- **Compliance:** treat **HIPAA** as in-scope (lines of business are "mixed/not
-  sure" — confirm with counsel; P&C generally isn't HIPAA-covered, health is)
-  **and PCI** (customers read card data aloud on calls).
+  and PII protection as the top priority**.
+- **Lines of business:** **all types of insurance** (incl. health). The agency
+  wants a **HIPAA-aligned security baseline** — "something close to HIPAA" — not
+  necessarily a full certified HIPAA program.
+- **Compliance reality:** even absent a formal HIPAA program, an insurance
+  agency is already legally obligated to protect customer PII under the **GLBA
+  Safeguards Rule** and most states' **NAIC Insurance Data Security Model Law**
+  (written security program + breach notification). HIPAA may additionally and
+  *mandatorily* bind the **health-insurance subset** of records — counsel scopes
+  which records get the formal treatment. The controls in Section 2.1 satisfy all
+  three regimes at once, so we build them regardless. **PCI** also applies
+  (customers read card data aloud on calls).
 - **Today:** Node/Twilio app on a **Hetzner** server; Claude (direct API) for
   coaching + recap; Twilio built-in real-time transcription; SuiteCRM planned.
 
@@ -48,6 +58,33 @@ comes from **BAAs + controls + scope reduction**, not from owning the server.
 4. **Don't regress functionality:** the existing transcript-buffer → coaching →
    recap pipeline stays; we swap the *edges* (STT engine, LLM transport, payment
    capture).
+
+---
+
+## 2.1 PII protection baseline (the practical "close to HIPAA")
+
+This is the concrete control set. It satisfies a HIPAA-aligned bar **and** the
+GLBA Safeguards Rule / NAIC insurance data-security expectations at the same
+time. Build these regardless of whether a formal HIPAA program is pursued.
+
+| # | Control | What it means here |
+|---|---|---|
+| 1 | **Data minimization** | Don't capture what you don't need: Twilio `<Pay>` for cards (never recorded), pause transcription during sensitive segments, redact PII/PHI at the STT layer before text is stored or sent to the LLM. |
+| 2 | **Encryption everywhere** | TLS 1.2+ in transit; AES-256 at rest via AWS KMS (RDS, S3, EBS); SuiteCRM DB on encrypted RDS. |
+| 3 | **Least-privilege access + MFA** | IAM least-privilege; **SSO + MFA** for agents/admins; role-based record access in SuiteCRM; no shared logins. ⚠️ **Current gap:** the softphone trusts an `identity` query param — replace with authenticated SSO before production (already flagged as a TODO in `routes/token.js`). |
+| 4 | **Audit logging** | CloudTrail (infra) + SuiteCRM access logs: who accessed which customer record, when. Retain logs per policy. |
+| 5 | **Retention minimization** | Transcripts are in-memory only and dropped after recap (already true); set a recording-retention policy (PCI recordings default to 1 year); Claude via Bedrock keeps data in-account / Anthropic direct = 30-day. |
+| 6 | **Network isolation** | Private subnets, security groups, VPC endpoints/PrivateLink for Bedrock/S3; public ingress only for Twilio webhooks/Media Streams, behind WAF + TLS. |
+| 7 | **Secrets management** | AWS Secrets Manager; no secrets in the repo or plaintext env on disk. (`.env` is gitignored — keep it that way.) |
+| 8 | **Vendor due diligence** | Sign the **free** BAAs with Twilio, Deepgram, Anthropic, and AWS — no cost, large risk reduction, and they double as GLBA/NAIC vendor-oversight evidence. |
+| 9 | **Backups** | Encrypted, access-controlled, tested restores (RDS automated backups + KMS). |
+| 10 | **Incident response + breach notification** | A written IR plan and breach-notification process — required by GLBA and state insurance law for **all** insurers, HIPAA or not. |
+| 11 | **Consent / disclosure** | Recording + transcription disclosure (done on inbound; **extend to outbound**), and honor state two-party-consent rules. |
+
+> The only things a *formal* HIPAA program adds on top of this list are
+> paperwork and process: a risk analysis, written policies, workforce training,
+> and periodic audits. The technical controls are the same — so this baseline is
+> the bulk of the work either way.
 
 ---
 
@@ -170,7 +207,13 @@ handling.
 
 ## 9. Open items to confirm with counsel / vendors
 
-- [ ] Does HIPAA actually apply given the mix of lines? (P&C vs health/life)
+- [ ] Scope the **formal HIPAA** treatment to the health-insurance subset of
+      records (counsel) — the baseline controls in Section 2.1 are built for all
+      records regardless.
+- [ ] Confirm GLBA Safeguards Rule + applicable state NAIC data-security
+      obligations (written security program, IR plan, vendor oversight).
+- [ ] Replace the softphone `identity` query param with authenticated SSO + MFA
+      (Control #3 — current access-control gap).
 - [ ] Twilio edition that includes the BAA (Security vs Enterprise) + enable PCI mode.
 - [ ] Deepgram: self-hosted vs managed-with-BAA decision (cost vs ops).
 - [ ] Bedrock vs direct Anthropic API for the LLM (both BAA-capable).
