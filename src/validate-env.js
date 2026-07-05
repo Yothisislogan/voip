@@ -1,0 +1,63 @@
+import { config } from "./config.js";
+
+/**
+ * Fail-fast configuration validation. In production (NODE_ENV=production) a fatal
+ * misconfiguration exits the process with a clear message, so a bad deploy stops
+ * immediately instead of running insecurely. Outside production, problems are
+ * warnings only.
+ *
+ * Returns { fatal: string[], warn: string[] } (also logs). Call at startup.
+ */
+export function validateEnv({ exitOnFatal = true } = {}) {
+  const isProd = process.env.NODE_ENV === "production";
+  const fatal = [];
+  const warn = [];
+
+  // ── Security-critical (fatal in production) ──
+  if (!config.auth.required) {
+    fatal.push("AUTH_REQUIRED=false disables login — never run this in production.");
+  }
+  if (config.auth.devLoginEnabled) {
+    fatal.push("DEV_LOGIN_ENABLED=true exposes a passwordless login — disable it in production.");
+  }
+  if (!config.auth.sessionSecret) {
+    fatal.push("SESSION_SECRET is required (used to sign session cookies). Set a long random value.");
+  }
+  if (!config.publicBaseUrl) {
+    fatal.push("PUBLIC_BASE_URL is required in production (webhooks + Secure cookies).");
+  } else if (!config.publicBaseUrl.startsWith("https://")) {
+    warn.push("PUBLIC_BASE_URL is not https:// — session cookies won't be marked Secure.");
+  }
+
+  // Auth must actually be usable: Google client + at least one agent.
+  if (config.auth.required && !config.auth.devLoginEnabled) {
+    if (!config.auth.google.clientId || !config.auth.google.clientSecret) {
+      fatal.push("Google OAuth is not configured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) — no one could sign in.");
+    }
+    if (!config.auth.agents.length) {
+      fatal.push("AGENT_DIRECTORY is empty — no agent is allowed to sign in.");
+    }
+  }
+
+  // ── Functional (warnings) ──
+  const twilioMissing = ["accountSid", "apiKeySid", "apiKeySecret", "twimlAppSid", "callerId"]
+    .filter((k) => !config.twilio[k]);
+  if (twilioMissing.length) warn.push(`Twilio not fully configured (${twilioMissing.join(", ")}) — calls/SMS won't work.`);
+  if (config.publicBaseUrl && !process.env.TWILIO_AUTH_TOKEN) {
+    warn.push("TWILIO_AUTH_TOKEN not set — inbound webhook signatures aren't validated.");
+  }
+  if (!config.databaseUrl) warn.push("DATABASE_URL not set — the Postgres CRM/pipeline is disabled.");
+
+  // ── Report ──
+  for (const w of warn) console.warn(`⚠️  ${w}`);
+  for (const f of fatal) console.error(`❌ ${f}`);
+
+  if (fatal.length && isProd) {
+    console.error(`\nRefusing to start: ${fatal.length} fatal configuration error(s) in production.`);
+    if (exitOnFatal) process.exit(1);
+  } else if (fatal.length) {
+    console.warn(`\n(${fatal.length} issue(s) would be fatal in production; continuing because NODE_ENV != production.)`);
+  }
+
+  return { fatal, warn };
+}

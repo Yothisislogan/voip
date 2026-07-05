@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WIT Connect — Call Detail</title>
+<style>
+  :root{--blue:#00AEEF;--deep:#007EAE;--ink:#17181C;--mute:#6B7280;--line:#E6E7EB;--paper:#FAFAFB;--green:#39D353;--amber:#F5A623;--red:#FF6868}
+  *{box-sizing:border-box;font-family:Inter,-apple-system,system-ui,sans-serif}
+  body{margin:0;background:var(--paper);color:var(--ink)}
+  a{color:var(--deep)}
+  .wrap{max-width:960px;margin:0 auto;padding:24px 20px}
+  .top{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+  .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--blue),#7C3AED);color:#fff;font-weight:900;display:grid;place-items:center}
+  .back{margin-left:auto;font-size:14px;font-weight:700;text-decoration:none}
+  .grid{display:grid;grid-template-columns:1fr 320px;gap:18px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:18px}
+  .card h2{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--mute);margin:0 0 12px}
+  h1{font-size:24px;margin:0}
+  .sub{color:var(--mute);font-size:14px;margin-top:2px}
+  .scorebadge{display:inline-flex;align-items:center;justify-content:center;width:74px;height:74px;border-radius:50%;font-size:26px;font-weight:900;color:#fff}
+  .factor{display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--line)}
+  .factor .delta.pos{color:#1B7F4B;font-weight:800}.factor .delta.neg{color:#B42318;font-weight:800}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+  .kv b{color:var(--mute);font-weight:700}
+  .seg{display:flex;gap:8px;margin-bottom:8px}
+  .seg .who{font-size:11px;font-weight:800;text-transform:uppercase;color:var(--mute);min-width:64px;padding-top:2px}
+  .bubble{padding:8px 11px;border-radius:12px;font-size:14px;line-height:1.4;background:var(--paper);flex:1}
+  .bubble.agent{background:#E2F4FC}
+  ul{margin:4px 0;padding-left:18px;font-size:14px}
+  .pill{display:inline-block;font-size:11px;font-weight:800;padding:3px 9px;border-radius:99px;background:#E2F4FC;color:var(--deep)}
+  .empty{color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="logo">W</div>
+      <div><b>Call Detail</b><div class="sub" id="sid"></div></div>
+      <a class="back" href="/contacts.html">← Contacts</a>
+    </div>
+    <div id="content"><div class="empty">Loading…</div></div>
+  </div>
+<script>
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const sid=new URLSearchParams(location.search).get("sid");
+const scoreColor=n=>n>=70?"#1FA85A":n>=40?"#F5A623":"#E5484D";
+const list=a=>a&&a.length?`<ul>${a.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:"<div class='empty'>None</div>";
+
+async function load(){
+  document.getElementById("sid").textContent=sid||"";
+  const r=await fetch(`/api/crm/calls/${encodeURIComponent(sid)}`,{credentials:"same-origin"});
+  if(r.status===401){location.href="/login";return}
+  if(r.status===503){document.getElementById("content").innerHTML="<div class='card'>CRM database not configured.</div>";return}
+  if(!r.ok){document.getElementById("content").innerHTML="<div class='card'>Call not found.</div>";return}
+  const {call,contact,score,segments,survey}=await r.json();
+  const recap=call.recap||null;
+  const name=contact?[contact.first_name,contact.last_name].filter(Boolean).join(" ")||contact.phone_e164:call.from_e164;
+
+  document.getElementById("content").innerHTML=`
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px">
+      <h1>${esc(name)}</h1>
+      ${contact?`<a class="pill" href="/contacts.html?id=${contact.id}">Open lead →</a>`:""}
+    </div>
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h2>Transcript</h2>
+          ${segments.length?segments.map(s=>`<div class="seg"><div class="who">${esc(s.speaker)}</div><div class="bubble ${s.speaker==="agent"?"agent":""}">${esc(s.text)}</div></div>`).join(""):"<div class='empty'>No transcript stored.</div>"}
+        </div>
+        <div class="card">
+          <h2>Recap</h2>
+          ${recap?`
+            <div style="font-size:14px;margin-bottom:10px">${esc(recap.summary||"")}</div>
+            <div class="kv">
+              <b>Outcome</b><span>${esc((recap.outcome||"").replace(/_/g," "))}</span>
+              <b>Products</b><span>${esc((recap.productsDiscussed||[]).join(", ")||"—")}</span>
+            </div>
+            <div style="margin-top:8px"><b style="font-size:11px;text-transform:uppercase;color:var(--mute)">Objections</b>${list(recap.objections)}</div>
+            <div><b style="font-size:11px;text-transform:uppercase;color:var(--mute)">Next steps</b>${list(recap.nextSteps)}</div>
+          `:"<div class='empty'>No recap stored.</div>"}
+        </div>
+      </div>
+      <div>
+        <div class="card" style="text-align:center">
+          <h2>Score</h2>
+          ${score?`<div class="scorebadge" style="background:${scoreColor(score.score)};margin:0 auto 10px">${score.score}</div>
+            <div class="sub">${esc((score.outcome||"").replace(/_/g," "))} · ${esc(score.sentiment||"")}</div>
+            <div style="margin-top:12px;text-align:left">${(score.factors||[]).map(f=>`<div class="factor"><span>${esc(f.label)}</span><span class="delta ${f.delta>=0?"pos":"neg"}">${f.delta>=0?"+":""}${f.delta}</span></div>`).join("")}</div>`
+            :"<div class='empty'>Not scored.</div>"}
+        </div>
+        <div class="card">
+          <h2>Extracted fields</h2>
+          ${contact?`<div class="kv">
+            ${kv("Policy",contact.policy_type)}${kv("Carrier",contact.carrier)}${kv("Premium",contact.premium)}
+            ${kv("VIN",contact.vin)}${kv("DOB",fmtDate(contact.dob))}${kv("Address",contact.address)}
+            ${kv("Vehicles",(contact.vehicles||[]).map(v=>`${v.year} ${v.make} ${v.model}`).join("; "))}
+            ${kv("Drivers",(contact.drivers||[]).join(", "))}
+            ${kv("Business",[contact.business_name,contact.business_type].filter(Boolean).join(" · "))}
+          </div>`:"<div class='empty'>No linked contact.</div>"}
+        </div>
+        <div class="card">
+          <h2>Survey</h2>
+          ${survey?`<div class="kv">${kv("Status",survey.status)}${kv("Rating",survey.rating!=null?survey.rating+"/5":"—")}${kv("Reply",survey.response_text)}</div>`:"<div class='empty'>No survey sent.</div>"}
+        </div>
+        <div class="card">
+          <h2>Call</h2>
+          <div class="kv">${kv("Direction",call.direction)}${kv("Duration",call.duration_seconds!=null?call.duration_seconds+"s":"—")}${kv("Status",call.status)}${kv("When",fmtDate(call.created_at))}</div>
+        </div>
+      </div>
+    </div>`;
+}
+function kv(k,v){return v!=null&&v!==""?`<b>${esc(k)}</b><span>${esc(v)}</span>`:""}
+function fmtDate(d){if(!d)return "";try{return new Date(d).toLocaleString()}catch{return String(d)}}
+load();
+</script>
+</body>
+</html>

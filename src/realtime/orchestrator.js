@@ -134,7 +134,7 @@ export async function onCallComplete(callSid, durationSec) {
       if (Object.keys(fields).length) await crm.updateContactFields(session.contactId, fields);
     }
 
-    await crm.completeCall({ callSid, durationSeconds: durationSec });
+    await crm.completeCall({ callSid, durationSeconds: durationSec, recap });
 
     // Optional ERPNext mirror (independent lookup; PG ids don't map to ERPNext).
     let mirroredToErp = false;

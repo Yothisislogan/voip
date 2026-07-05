@@ -15,7 +15,16 @@ const CONTACT_FIELDS = new Set([
   "lifecycle_stage", "source", "policy_type", "carrier", "premium",
   "policy_number", "effective_date", "renewal_date", "coverage_status",
   "address", "notes",
+  // Richer insurance fields (0002).
+  "dob", "vin", "drivers", "vehicles", "business_name", "business_type",
 ]);
+
+// JSONB columns — values are JSON-encoded before binding.
+const JSONB_FIELDS = new Set(["drivers", "vehicles"]);
+
+function encodeField(key, value) {
+  return JSONB_FIELDS.has(key) && typeof value !== "string" ? JSON.stringify(value) : value;
+}
 
 // ── contacts / leads ──────────────────────────────────────────────
 /** Upsert a contact by phone; bumps last_contacted_at. Returns the row or null. */
@@ -45,7 +54,7 @@ export async function createContact(fields = {}) {
   if (!cols.length) return null;
   try {
     const placeholders = cols.map((_, i) => `$${i + 1}`);
-    const values = cols.map((c) => fields[c]);
+    const values = cols.map((c) => encodeField(c, fields[c]));
     const r = await db.query(
       `INSERT INTO contacts (${cols.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`,
       values
@@ -77,7 +86,7 @@ export async function updateContactFields(contactId, fields = {}) {
   if (!entries.length) return null;
   try {
     const sets = entries.map(([k], i) => `${k} = $${i + 2}`);
-    const values = entries.map(([, v]) => v);
+    const values = entries.map(([k, v]) => encodeField(k, v));
     const r = await db.query(
       `UPDATE contacts SET ${sets.join(", ")} WHERE id = $1 RETURNING *`,
       [contactId, ...values]
@@ -85,6 +94,93 @@ export async function updateContactFields(contactId, fields = {}) {
     return r.rows[0] || null;
   } catch (err) {
     console.error("updateContactFields failed:", err.message);
+    return null;
+  }
+}
+
+// ── reads for the CRM API ─────────────────────────────────────────
+/** List/search contacts (by name, phone, email), newest activity first. */
+export async function listContacts({ q, limit = 50, offset = 0 } = {}) {
+  if (!db.enabled) return [];
+  try {
+    const lim = Math.min(Number(limit) || 50, 200);
+    const off = Math.max(Number(offset) || 0, 0);
+    if (q) {
+      const like = `%${String(q).toLowerCase()}%`;
+      const r = await db.query(
+        `SELECT * FROM contacts
+           WHERE lower(coalesce(first_name,'')||' '||coalesce(last_name,'')) LIKE $1
+              OR phone_e164 LIKE $1 OR lower(coalesce(email,'')) LIKE $1
+              OR lower(coalesce(company,'')) LIKE $1 OR lower(coalesce(business_name,'')) LIKE $1
+           ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,
+        [like, lim, off]
+      );
+      return r.rows;
+    }
+    const r = await db.query(
+      "SELECT * FROM contacts ORDER BY updated_at DESC LIMIT $1 OFFSET $2",
+      [lim, off]
+    );
+    return r.rows;
+  } catch (err) {
+    console.error("listContacts failed:", err.message);
+    return [];
+  }
+}
+
+export async function getContact(id) {
+  if (!db.enabled || !id) return null;
+  try {
+    const r = await db.query("SELECT * FROM contacts WHERE id = $1", [id]);
+    return r.rows[0] || null;
+  } catch (err) {
+    console.error("getContact failed:", err.message);
+    return null;
+  }
+}
+
+/** Recent calls (optionally for one contact), with score fields joined. */
+export async function listCalls({ contactId, limit = 50 } = {}) {
+  if (!db.enabled) return [];
+  try {
+    const lim = Math.min(Number(limit) || 50, 200);
+    const params = [];
+    let where = "";
+    if (contactId) { params.push(contactId); where = "WHERE c.contact_id = $1"; }
+    params.push(lim);
+    const r = await db.query(
+      `SELECT c.*, s.score, s.sentiment, s.outcome
+         FROM calls c LEFT JOIN call_scores s ON s.call_sid = c.twilio_call_sid
+         ${where}
+         ORDER BY c.created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    return r.rows;
+  } catch (err) {
+    console.error("listCalls failed:", err.message);
+    return [];
+  }
+}
+
+/** Full call detail: call + contact + score + transcript segments + survey. */
+export async function getCallDetail(callSid) {
+  if (!db.enabled || !callSid) return null;
+  try {
+    const call = (await db.query("SELECT * FROM calls WHERE twilio_call_sid = $1", [callSid])).rows[0];
+    if (!call) return null;
+    const contact = call.contact_id
+      ? (await db.query("SELECT * FROM contacts WHERE id = $1", [call.contact_id])).rows[0] || null
+      : null;
+    const score = (await db.query("SELECT * FROM call_scores WHERE call_sid = $1", [callSid])).rows[0] || null;
+    const segments = (
+      await db.query("SELECT speaker, text, spoken_at FROM transcript_segments WHERE call_sid = $1 ORDER BY seq", [callSid])
+    ).rows;
+    const survey = (
+      await db.query("SELECT * FROM surveys WHERE call_sid = $1 ORDER BY sent_at DESC LIMIT 1", [callSid])
+    ).rows[0] || null;
+    return { call, contact, score, segments, survey };
+  } catch (err) {
+    console.error("getCallDetail failed:", err.message);
     return null;
   }
 }
@@ -125,16 +221,17 @@ export async function recordCall({ callSid, contactId, direction, from, to, stat
   }
 }
 
-export async function completeCall({ callSid, durationSeconds, recordingUrl }) {
+export async function completeCall({ callSid, durationSeconds, recordingUrl, recap }) {
   if (!db.enabled || !callSid) return;
   try {
     await db.query(
       `UPDATE calls
          SET status = 'completed', ended_at = now(),
              duration_seconds = COALESCE($2, duration_seconds),
-             recording_url = COALESCE($3, recording_url)
+             recording_url = COALESCE($3, recording_url),
+             recap = COALESCE($4, recap)
        WHERE twilio_call_sid = $1`,
-      [callSid, durationSeconds ?? null, recordingUrl || null]
+      [callSid, durationSeconds ?? null, recordingUrl || null, recap ? JSON.stringify(recap) : null]
     );
   } catch (err) {
     console.error("completeCall failed:", err.message);

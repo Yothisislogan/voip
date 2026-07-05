@@ -224,8 +224,27 @@ lead. Optional shared secret via `EMAIL_INBOUND_TOKEN`.
 **Scoring & extraction are local/deterministic** — no LLM required — so they work
 regardless of `LLM_BACKEND`.
 
-**Deploy:** `docker compose up -d --build` runs the app + Postgres and applies
-the schema automatically. See `docs/deploy-hetzner.md`.
+### CRM UI + API
+
+- **Leads list + editor:** `/contacts.html` — search, view, and edit contacts
+  (agent-facing; reachable from the workspace rail).
+- **Call detail:** `/call.html?sid=<CallSid>` — transcript, recap, score +
+  factors, extracted fields, survey result.
+- **Authenticated API** (`requireAuth`): `GET /api/crm/contacts[?q=]`,
+  `GET|PATCH /api/crm/contacts/:id`, `GET /api/crm/calls[?contactId=]`,
+  `GET /api/crm/calls/:sid`.
+
+### Migrations, validation, backups, deploy
+
+- **Migrations:** versioned SQL in `db/migrations/`, tracked in
+  `schema_migrations`. `npm run migrate` applies pending ones (idempotent;
+  docker-compose runs it on boot).
+- **Fail-fast config:** in `NODE_ENV=production`, a bad/insecure config (no
+  `SESSION_SECRET`, auth bypass on, no agents, …) refuses to start.
+- **Backups:** `scripts/backup.sh` (gzip + retention) — see `docs/backups.md`.
+- **Deploy:** `docker compose up -d --build` runs the app + Postgres and applies
+  migrations automatically. See `docs/deploy-hetzner.md` and the go-live
+  `docs/deploy-checklist.md` (Cloudflare + Hetzner).
 
 ## Authentication (Google OAuth + 2FA)
 

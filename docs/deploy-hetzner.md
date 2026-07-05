@@ -79,7 +79,7 @@ docker compose exec db pg_dump -U wit wit > backup.sql   # backup
 
 ## Data model
 
-The Postgres CRM (`db/schema.sql`) is the app's operational store:
+The Postgres CRM (`db/migrations/`) is the app's operational store:
 
 | Table | Purpose |
 | --- | --- |

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WIT Connect — Leads &amp; Contacts</title>
+<style>
+  :root{--blue:#00AEEF;--deep:#007EAE;--purple:#7C3AED;--ink:#17181C;--mute:#6B7280;--line:#E6E7EB;--paper:#FAFAFB;--green:#39D353}
+  *{box-sizing:border-box;font-family:Inter,-apple-system,system-ui,sans-serif}
+  body{margin:0;height:100vh;overflow:hidden;background:#fff;color:var(--ink);display:grid;grid-template-rows:56px 1fr}
+  .top{display:flex;align-items:center;gap:12px;padding:0 18px;border-bottom:1px solid var(--line)}
+  .logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-weight:900;display:grid;place-items:center}
+  .top a{margin-left:auto;font-size:14px;font-weight:700;color:var(--deep);text-decoration:none}
+  .main{display:grid;grid-template-columns:340px 1fr;min-height:0}
+  .list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--paper)}
+  .search{padding:12px}
+  .search input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px}
+  .rows{overflow:auto;min-height:0}
+  .item{padding:11px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+  .item:hover{background:#F1F1F4}.item.active{background:#E2F4FC}
+  .item .n{font-weight:800;font-size:14px}.item .m{font-size:12px;color:var(--mute)}
+  .item .score{float:right;font-size:11px;font-weight:900;color:#fff;border-radius:99px;padding:2px 8px}
+  .detail{overflow:auto;min-height:0;padding:22px}
+  .empty{color:var(--mute);margin-top:20vh;text-align:center}
+  h1{font-size:24px;margin:0 0 2px}.sub{color:var(--mute);font-size:14px}
+  .form{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:18px;max-width:720px}
+  .f{display:flex;flex-direction:column}.f.full{grid-column:1/3}
+  .f label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);font-weight:800;margin-bottom:4px}
+  .f input,.f select,.f textarea{padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:14px}
+  .ro{background:#F7F7F9;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:14px;min-height:38px}
+  .bar{margin-top:16px;display:flex;gap:10px;align-items:center}
+  .btn{border:0;border-radius:10px;padding:10px 16px;font-weight:800;cursor:pointer;background:var(--blue);color:#fff}
+  .btn.ghost{background:var(--paper);color:#222;border:1px solid var(--line)}
+  .saved{color:#1B7F4B;font-size:13px;font-weight:700}
+  .calls{margin-top:24px;max-width:720px}
+  .call{display:flex;justify-content:space-between;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;text-decoration:none;color:inherit}
+  .call:hover{background:var(--paper)}
+  .badge{font-size:11px;font-weight:900;color:#fff;border-radius:99px;padding:2px 9px}
+</style>
+</head>
+<body>
+  <div class="top"><div class="logo">W</div><b>Leads &amp; Contacts</b><a href="/agent.html">← Workspace</a></div>
+  <div class="main">
+    <div class="list">
+      <div class="search"><input id="q" placeholder="Search name, phone, email, business…" autocomplete="off" /></div>
+      <div class="rows" id="rows"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="detail" id="detail"><div class="empty">Select a contact to view and edit.</div></div>
+  </div>
+<script>
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const scoreColor=n=>n>=70?"#1FA85A":n>=40?"#F5A623":"#E5484D";
+const EDIT=[["first_name","First name"],["last_name","Last name"],["email","Email"],["company","Company"],["title","Title"],["policy_type","Policy type"],["carrier","Carrier"],["premium","Premium"],["policy_number","Policy #"],["renewal_date","Renewal date"],["coverage_status","Coverage status"]];
+const STAGES=["lead","contact","customer","lost"];
+let activeId=null;
+
+async function api(path,opts){const r=await fetch(path,{credentials:"same-origin",...opts});if(r.status===401){location.href="/login";throw new Error("unauth")}if(r.status===503)throw new Error("CRM database not configured");return r}
+
+async function search(){
+  const q=document.getElementById("q").value.trim();
+  const r=await api(`/api/crm/contacts?q=${encodeURIComponent(q)}&limit=100`);
+  const {contacts}=await r.json();
+  const el=document.getElementById("rows");
+  if(!contacts.length){el.innerHTML="<div class='empty'>No contacts.</div>";return}
+  el.innerHTML="";
+  for(const c of contacts){
+    const name=[c.first_name,c.last_name].filter(Boolean).join(" ")||c.business_name||c.phone_e164||"(no name)";
+    const d=document.createElement("div");
+    d.className="item"+(String(c.id)===String(activeId)?" active":"");
+    d.innerHTML=`<div class="n">${esc(name)}</div><div class="m">${esc(c.phone_e164||c.email||"")} · ${esc(c.lifecycle_stage)}</div>`;
+    d.onclick=()=>openContact(c.id);
+    el.appendChild(d);
+  }
+}
+
+async function openContact(id){
+  activeId=id;
+  [...document.querySelectorAll(".item")].forEach(x=>x.classList.remove("active"));
+  const r=await api(`/api/crm/contacts/${id}`);
+  const {contact,calls}=await r.json();
+  const name=[contact.first_name,contact.last_name].filter(Boolean).join(" ")||contact.phone_e164;
+  history.replaceState(null,"",`?id=${id}`);
+  document.getElementById("detail").innerHTML=`
+    <h1>${esc(name)}</h1><div class="sub">${esc(contact.phone_e164||"")}</div>
+    <div class="form" id="form">
+      ${EDIT.map(([k,label])=>`<div class="f"><label>${label}</label><input data-k="${k}" value="${esc(contact[k]??"")}"/></div>`).join("")}
+      <div class="f"><label>Lifecycle stage</label><select data-k="lifecycle_stage">${STAGES.map(s=>`<option ${contact.lifecycle_stage===s?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="f full"><label>Address</label><input data-k="address" value="${esc(contact.address??"")}"/></div>
+      <div class="f full"><label>Notes</label><textarea data-k="notes" rows="3">${esc(contact.notes??"")}</textarea></div>
+      <div class="f"><label>VIN (extracted)</label><div class="ro">${esc(contact.vin||"—")}</div></div>
+      <div class="f"><label>DOB (extracted)</label><div class="ro">${esc(fmtDate(contact.dob)||"—")}</div></div>
+      <div class="f"><label>Vehicles (extracted)</label><div class="ro">${esc((contact.vehicles||[]).map(v=>`${v.year} ${v.make} ${v.model}`).join("; ")||"—")}</div></div>
+      <div class="f"><label>Drivers (extracted)</label><div class="ro">${esc((contact.drivers||[]).join(", ")||"—")}</div></div>
+      <div class="f"><label>Business (extracted)</label><div class="ro">${esc([contact.business_name,contact.business_type].filter(Boolean).join(" · ")||"—")}</div></div>
+    </div>
+    <div class="bar"><button class="btn" id="save">Save</button><button class="btn ghost" onclick="location.reload()">Reset</button><span class="saved" id="saved"></span></div>
+    <div class="calls"><h3>Recent calls</h3>${calls.length?calls.map(c=>`
+      <a class="call" href="/call.html?sid=${encodeURIComponent(c.twilio_call_sid)}">
+        <span>${esc(c.direction||"call")} · ${fmtDate(c.created_at)}</span>
+        <span>${c.score!=null?`<span class="badge" style="background:${scoreColor(c.score)}">${c.score}</span>`:""} ${esc((c.outcome||"").replace(/_/g," "))}</span>
+      </a>`).join(""):"<div class='empty' style='margin:10px 0'>No calls yet.</div>"}</div>`;
+  document.getElementById("save").onclick=()=>save(id);
+  search(); // refresh active highlight
+}
+
+async function save(id){
+  const patch={};
+  document.querySelectorAll("#form [data-k]").forEach(el=>{ patch[el.dataset.k]=el.value; });
+  const r=await api(`/api/crm/contacts/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});
+  if(r.ok){document.getElementById("saved").textContent="✓ Saved";setTimeout(()=>document.getElementById("saved").textContent="",2000);}
+}
+function fmtDate(d){if(!d)return "";try{return new Date(d).toLocaleDateString()}catch{return String(d)}}
+
+let timer;document.getElementById("q").oninput=()=>{clearTimeout(timer);timer=setTimeout(search,250)};
+search().then(()=>{const id=new URLSearchParams(location.search).get("id");if(id)openContact(id)}).catch(e=>{document.getElementById("rows").innerHTML=`<div class='empty'>${esc(e.message)}</div>`});
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import twilio from "twilio";
 
 import { config } from "./config.js";
+import { validateEnv } from "./validate-env.js";
 import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
 import { recordingRouter } from "./routes/recording.js";
@@ -13,8 +14,12 @@ import { authRouter } from "./routes/auth.js";
 import { aiRouter } from "./routes/ai.js";
 import { messagingRouter, messagingWebhookRouter } from "./routes/messaging.js";
 import { emailRouter } from "./routes/email.js";
+import { crmRouter } from "./routes/crm.js";
 import { pageGate } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
+
+// Fail fast on bad/insecure config in production (before we bind a port).
+validateEnv();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "..", "public");
@@ -41,7 +46,7 @@ app.get("/2fa", (_req, res) => res.sendFile(path.join(publicDir, "2fa.html")));
 
 // Gate the app pages: an authenticated "full" session is required, otherwise
 // redirect to /login. The login + 2FA pages are served by static, ungated.
-const PROTECTED_PAGES = new Set(["/", "/index.html", "/softphone.html", "/agent.html"]);
+const PROTECTED_PAGES = new Set(["/", "/index.html", "/softphone.html", "/agent.html", "/contacts.html", "/call.html"]);
 app.use((req, res, next) => {
   if (PROTECTED_PAGES.has(req.path)) return pageGate(req, res, next);
   next();
@@ -57,6 +62,7 @@ const twilioWebhook = config.publicBaseUrl
 
 app.use(tokenRouter);
 app.use(aiRouter);
+app.use(crmRouter); // authenticated CRM API (requireAuth inside)
 app.use(emailRouter); // inbound email intake webhook (optional token)
 app.use(messagingRouter); // agent send + conversation list (requireAuth inside)
 app.use(twilioWebhook, voiceRouter);
