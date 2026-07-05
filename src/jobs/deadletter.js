@@ -57,6 +57,48 @@ export async function resolveJob(id) {
   await db.query(`UPDATE failed_jobs SET resolved_at = now(), updated_at = now() WHERE id = $1`, [id]);
 }
 
+/** Aggregate queue health for the admin/status surface. */
+export async function queueStats() {
+  if (!db.enabled) return { enabled: false, pending: 0, resolved: 0, exhausted: 0, oldestPendingAt: null };
+  const { rows } = await db.query(
+    `SELECT
+       count(*) FILTER (WHERE resolved_at IS NULL AND attempts < max_attempts)::int AS pending,
+       count(*) FILTER (WHERE resolved_at IS NOT NULL)::int                          AS resolved,
+       count(*) FILTER (WHERE resolved_at IS NULL AND attempts >= max_attempts)::int AS exhausted,
+       min(created_at) FILTER (WHERE resolved_at IS NULL)                            AS oldest_pending_at
+     FROM failed_jobs`
+  );
+  const r = rows[0] || {};
+  return {
+    enabled: true,
+    pending: r.pending || 0,
+    resolved: r.resolved || 0,
+    exhausted: r.exhausted || 0,
+    oldestPendingAt: r.oldest_pending_at || null,
+  };
+}
+
+/** List recent failed jobs for the admin viewer. status: pending|resolved|exhausted|all. */
+export async function listFailedJobs({ limit = 100, status = "pending" } = {}) {
+  if (!db.enabled) return [];
+  const filters = {
+    pending: "resolved_at IS NULL AND attempts < max_attempts",
+    resolved: "resolved_at IS NOT NULL",
+    exhausted: "resolved_at IS NULL AND attempts >= max_attempts",
+    all: "TRUE",
+  };
+  const where = filters[status] || filters.pending;
+  const { rows } = await db.query(
+    `SELECT id, kind, error, attempts, max_attempts, created_at, updated_at, next_retry_at, resolved_at
+       FROM failed_jobs
+      WHERE ${where}
+      ORDER BY created_at DESC
+      LIMIT $1`,
+    [Math.min(Number(limit) || 100, 500)]
+  );
+  return rows;
+}
+
 /** Record a retry failure: bump attempts and schedule the next attempt. */
 export async function bumpJob(id, attempts, error) {
   if (!db.enabled) return;

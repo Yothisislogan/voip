@@ -17,7 +17,8 @@ import { aiRouter } from "./routes/ai.js";
 import { messagingRouter, messagingWebhookRouter } from "./routes/messaging.js";
 import { emailRouter } from "./routes/email.js";
 import { crmRouter } from "./routes/crm.js";
-import { pageGate } from "./auth/middleware.js";
+import { adminRouter } from "./routes/admin.js";
+import { pageGate, roleAtLeast } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
 import { securityHeaders } from "./middleware/security.js";
 import { ensureCsrfCookie } from "./middleware/csrf.js";
@@ -82,6 +83,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Admin console page — requires the admin role (falls through to static on pass).
+app.get("/admin.html", pageGate, (req, res, next) => {
+  if (!req.agent || !roleAtLeast(req.agent.role, "admin")) return res.redirect("/agent.html");
+  next();
+});
+
 app.use(express.static(publicDir));
 
 // Validate X-Twilio-Signature on all webhook routes.
@@ -107,6 +114,7 @@ const twilioWebhook = (() => {
 app.use(apiLimiter, tokenRouter);
 app.use(apiLimiter, aiRouter);
 app.use(apiLimiter, crmRouter); // authenticated CRM API (requireAuth + CSRF inside)
+app.use(apiLimiter, adminRouter); // admin console API (status, DLQ, audit — admin-only inside)
 app.use(apiLimiter, messagingRouter); // agent send + conversation list (requireAuth + CSRF inside)
 
 // Webhooks — separate, looser budget (providers can burst). Twilio routes are

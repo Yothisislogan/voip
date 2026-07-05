@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WIT Connect — Admin Console</title>
+<style>
+  :root{--blue:#00AEEF;--deep:#007EAE;--purple:#7C3AED;--ink:#17181C;--mute:#6B7280;--line:#E6E7EB;--paper:#FAFAFB;--green:#1FA85A;--amber:#F5A623;--red:#E5484D}
+  *{box-sizing:border-box;font-family:Inter,-apple-system,system-ui,sans-serif}
+  body{margin:0;min-height:100vh;background:#fff;color:var(--ink)}
+  .top{display:flex;align-items:center;gap:12px;padding:0 18px;height:56px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:5}
+  .logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-weight:900;display:grid;place-items:center}
+  .top .who{margin-left:auto;font-size:13px;color:var(--mute)}
+  .top a{font-size:14px;font-weight:700;color:var(--deep);text-decoration:none;margin-left:16px}
+  .wrap{max-width:1100px;margin:0 auto;padding:22px 18px 60px}
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin:30px 0 12px}
+  h2:first-child{margin-top:6px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+  .card{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--paper)}
+  .card .k{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+  .card .v{font-size:18px;font-weight:800;margin-top:6px;display:flex;align-items:center;gap:8px}
+  .card .sub{font-size:12px;color:var(--mute);margin-top:4px}
+  .dot{width:10px;height:10px;border-radius:99px;display:inline-block}
+  .ok{background:var(--green)}.warn{background:var(--amber)}.bad{background:var(--red)}
+  .pill{font-size:11px;font-weight:800;border-radius:99px;padding:2px 9px;color:#fff}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+  td.mono,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .err{color:var(--red);max-width:420px;white-space:pre-wrap;word-break:break-word}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  select,input{padding:7px 10px;border:1px solid var(--line);border-radius:9px;font-size:13px}
+  .btn{border:0;border-radius:9px;padding:7px 12px;font-weight:800;cursor:pointer;background:var(--blue);color:#fff;font-size:13px}
+  .btn.ghost{background:#fff;color:#222;border:1px solid var(--line)}
+  .btn.sm{padding:4px 10px;font-size:12px}
+  .empty{color:var(--mute);padding:18px 4px}
+  .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="logo">W</div><b>Admin Console</b>
+    <span class="who" id="who"></span>
+    <a href="/agent.html">← Workspace</a>
+    <a href="#" id="refresh">↻ Refresh</a>
+  </div>
+  <div class="wrap">
+    <h2>System status</h2>
+    <div class="cards" id="status"><div class="empty">Loading…</div></div>
+
+    <h2>Failed jobs (dead-letter queue)</h2>
+    <div class="toolbar">
+      <select id="jobStatus">
+        <option value="pending">Pending</option>
+        <option value="exhausted">Exhausted</option>
+        <option value="resolved">Resolved</option>
+        <option value="all">All</option>
+      </select>
+      <button class="btn ghost sm" id="jobReload">Reload</button>
+    </div>
+    <div class="scroll"><table id="jobs"><tbody><tr><td class="empty">Loading…</td></tr></tbody></table></div>
+
+    <h2>Audit log</h2>
+    <div class="toolbar">
+      <input id="aActor" placeholder="actor (identity)" />
+      <input id="aAction" placeholder="action e.g. contact.update" />
+      <button class="btn ghost sm" id="aReload">Reload</button>
+    </div>
+    <div class="scroll"><table id="audit"><tbody><tr><td class="empty">Loading…</td></tr></tbody></table></div>
+  </div>
+<script>
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)wit_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):""}
+async function api(path,opts={}){
+  const method=(opts.method||"GET").toUpperCase();
+  const headers={...(opts.headers||{})};
+  if(method!=="GET"&&method!=="HEAD")headers["X-CSRF-Token"]=csrfToken();
+  const r=await fetch(path,{credentials:"same-origin",...opts,headers});
+  if(r.status===401){location.href="/login";throw new Error("unauth")}
+  if(r.status===403){location.href="/agent.html";throw new Error("forbidden")}
+  return r;
+}
+function fmt(d){if(!d)return "—";try{return new Date(d).toLocaleString()}catch{return String(d)}}
+function ago(d){if(!d)return "";const s=(Date.now()-new Date(d).getTime())/1000;if(s<60)return Math.round(s)+"s";if(s<3600)return Math.round(s/60)+"m";if(s<86400)return Math.round(s/3600)+"h";return Math.round(s/86400)+"d"}
+function bytes(n){if(n==null)return "—";const u=["B","KB","MB","GB"];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?1:0)+u[i]}
+function statusDot(state){return `<span class="dot ${state}"></span>`}
+
+function card(k,vHtml,sub){return `<div class="card"><div class="k">${esc(k)}</div><div class="v">${vHtml}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`}
+
+async function loadStatus(){
+  const el=document.getElementById("status");
+  try{
+    const s=await(await api("/api/admin/status")).json();
+    const cards=[];
+    cards.push(card("Database", `${statusDot(s.db.up?"ok":s.db.enabled?"bad":"warn")} ${s.db.enabled?(s.db.up?"Up":"DOWN"):"Disabled"}`));
+    cards.push(card("Twilio", `${statusDot(s.twilio.configured?"ok":"warn")} ${s.twilio.configured?"Configured":"Incomplete"}`,
+      s.twilio.configured?`caller ${esc(s.twilio.callerId||"")}${s.twilio.authTokenSet?"":" · no auth token"}`:`missing: ${esc((s.twilio.missing||[]).join(", "))}`));
+    cards.push(card("Auth", `${statusDot(s.auth.required?"ok":"bad")} ${s.auth.required?"Enabled":"BYPASSED"}`,
+      `${s.auth.twoFactor?"2FA on":"2FA off"}${s.auth.devLogin?" · dev login ON":""}`));
+    cards.push(card("Messaging", `${statusDot(s.messaging.configured?"ok":"warn")} ${s.messaging.enabled?esc(s.messaging.provider):"Off"}`,
+      s.messaging.configured?"Provider configured":"Not fully configured"));
+    cards.push(card("ERPNext", `${statusDot(s.erpnext.configured?"ok":"warn")} ${s.erpnext.configured?"Connected":"Not set"}`, "Optional mirror"));
+    cards.push(card("Email intake", `${statusDot(s.email.enabled?"ok":"warn")} ${s.email.enabled?"On":"Off"}`, s.email.tokenProtected?"Token-protected":"No token"));
+    cards.push(card("AI backends", `${esc(s.ai.coachingBackend)} / ${esc(s.ai.recapBackend)}`, "coaching / recap"));
+    const q=s.queue||{};
+    const qState=q.pending>0||q.exhausted>0?(q.exhausted>0?"bad":"warn"):"ok";
+    cards.push(card("Job queue", `${statusDot(qState)} ${q.pending||0} pending`,
+      `${q.exhausted||0} exhausted · ${q.resolved||0} resolved${q.oldestPendingAt?` · oldest ${ago(q.oldestPendingAt)}`:""}`));
+    const b=s.backups||{};
+    const backupState=!b.latest?"warn":((Date.now()-new Date(b.latest.at).getTime())>36*3600*1000?"warn":"ok");
+    cards.push(card("Backups", `${statusDot(backupState)} ${b.latest?ago(b.latest.at)+" ago":"None found"}`,
+      b.latest?`${esc(b.latest.file)} · ${bytes(b.latest.sizeBytes)} · ${b.count} total`:`dir: ${esc(b.dir||"")}`));
+    const r=s.retention||{};
+    const retSet=r.transcriptDays||r.recordingDays||r.auditDays;
+    cards.push(card("Retention", `${statusDot(retSet?"ok":"warn")} ${retSet?"Configured":"Keep forever"}`,
+      `transcripts ${r.transcriptDays||0}d · recordings ${r.recordingDays||0}d · audit ${r.auditDays||0}d`));
+    cards.push(card("Audit (24h)", `${s.audit.last24h==null?"—":s.audit.last24h} events`, esc(s.publicBaseUrl||"")));
+    el.innerHTML=cards.join("");
+  }catch(e){el.innerHTML=`<div class="empty">${esc(e.message)}</div>`}
+}
+
+async function loadJobs(){
+  const status=document.getElementById("jobStatus").value;
+  const tb=document.querySelector("#jobs tbody");
+  try{
+    const {jobs}=await(await api(`/api/admin/failed-jobs?status=${status}&limit=200`)).json();
+    if(!jobs.length){tb.innerHTML=`<tr><td class="empty">No ${status} jobs.</td></tr>`;return}
+    tb.innerHTML=`<tr><th>ID</th><th>Kind</th><th>Attempts</th><th>Created</th><th>Next retry</th><th>Error</th><th></th></tr>`+
+      jobs.map(j=>`<tr>
+        <td class="mono">${j.id}</td>
+        <td><code>${esc(j.kind)}</code></td>
+        <td>${j.attempts}/${j.max_attempts}</td>
+        <td>${fmt(j.created_at)}</td>
+        <td>${j.resolved_at?"<i>resolved</i>":fmt(j.next_retry_at)}</td>
+        <td class="err">${esc(j.error||"")}</td>
+        <td>${j.resolved_at?"":`<button class="btn ghost sm" data-resolve="${j.id}">Resolve</button>`}</td>
+      </tr>`).join("");
+    tb.querySelectorAll("[data-resolve]").forEach(b=>b.onclick=async()=>{
+      b.disabled=true;
+      try{await api(`/api/admin/failed-jobs/${b.dataset.resolve}/resolve`,{method:"POST"});loadJobs();loadStatus()}catch(e){b.disabled=false;alert(e.message)}
+    });
+  }catch(e){tb.innerHTML=`<tr><td class="empty">${esc(e.message)}</td></tr>`}
+}
+
+async function loadAudit(){
+  const actor=document.getElementById("aActor").value.trim();
+  const action=document.getElementById("aAction").value.trim();
+  const tb=document.querySelector("#audit tbody");
+  const qs=new URLSearchParams({limit:"200"});if(actor)qs.set("actor",actor);if(action)qs.set("action",action);
+  try{
+    const {entries}=await(await api(`/api/admin/audit?${qs}`)).json();
+    if(!entries.length){tb.innerHTML=`<tr><td class="empty">No audit entries.</td></tr>`;return}
+    tb.innerHTML=`<tr><th>When</th><th>Actor</th><th>Role</th><th>Action</th><th>Entity</th><th>IP</th><th>Detail</th></tr>`+
+      entries.map(e=>`<tr>
+        <td>${fmt(e.at)}</td>
+        <td>${esc(e.actor_identity||"")}</td>
+        <td>${esc(e.actor_role||"")}</td>
+        <td><code>${esc(e.action)}</code></td>
+        <td>${esc([e.entity_type,e.entity_id].filter(Boolean).join(":"))}</td>
+        <td class="mono">${esc(e.ip||"")}</td>
+        <td class="mono">${esc(e.detail?JSON.stringify(e.detail):"")}</td>
+      </tr>`).join("");
+  }catch(e){tb.innerHTML=`<tr><td class="empty">${esc(e.message)}</td></tr>`}
+}
+
+async function whoami(){try{const me=await(await fetch("/auth/me",{credentials:"same-origin"})).json();document.getElementById("who").textContent=(me.name||me.identity||"")+(me.role?` · ${me.role}`:"")}catch{}}
+
+document.getElementById("refresh").onclick=e=>{e.preventDefault();loadStatus();loadJobs();loadAudit()};
+document.getElementById("jobReload").onclick=loadJobs;
+document.getElementById("jobStatus").onchange=loadJobs;
+document.getElementById("aReload").onclick=loadAudit;
+whoami();loadStatus();loadJobs();loadAudit();
+</script>
+</body>
+</html>

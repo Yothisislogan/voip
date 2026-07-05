@@ -81,6 +81,10 @@ verifies the rows landed via the CRM API.
 
 ## 8. Ongoing
 
+- [ ] Bookmark the **Admin Console** (`/admin.html`, admin role) — live system
+      status, the failed-job queue, and the audit log in one place.
+- [ ] Keep the **operator runbook** (`docs/runbook.md`) handy for routine ops and
+      incident response.
 - [ ] Monitor `docker compose logs` / add log shipping.
 - [ ] Rotate secrets on staff changes; keep `AGENT_DIRECTORY` current.
 - [ ] Re-run `docker compose up -d --build` to deploy updates (migrations auto-apply).
