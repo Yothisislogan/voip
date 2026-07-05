@@ -138,6 +138,38 @@ export const config = {
     },
     agents: parseAgentDirectory(process.env.AGENT_DIRECTORY),
   },
+
+  // Security middleware knobs (hand-rolled; see src/middleware/).
+  security: {
+    // Enforce CSRF on cookie-authenticated browser POST/PATCH. Off only for
+    // AUTH_REQUIRED=false dev, where there's no session cookie to forge.
+    csrfEnabled: process.env.CSRF_ENABLED
+      ? process.env.CSRF_ENABLED !== "false"
+      : process.env.AUTH_REQUIRED !== "false",
+    // Content-Security-Policy for the app pages. Inline is allowed because the
+    // agent UIs use inline <script>; tighten with nonces if those are extracted.
+    csp:
+      process.env.CONTENT_SECURITY_POLICY ||
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    hstsMaxAge: Number(process.env.HSTS_MAX_AGE) || 15552000, // 180 days
+    rateLimit: {
+      // Requests per window per client IP. Auth endpoints are stricter.
+      windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000,
+      apiMax: Number(process.env.RATE_LIMIT_API_MAX) || 300,
+      authMax: Number(process.env.RATE_LIMIT_AUTH_MAX) || 20,
+      webhookMax: Number(process.env.RATE_LIMIT_WEBHOOK_MAX) || 600,
+      trustProxy: process.env.RATE_LIMIT_TRUST_PROXY !== "false", // read X-Forwarded-For (behind Caddy/CF)
+    },
+  },
+
+  // Data retention (days). 0 = keep forever. Enforced by scripts/purge-retention.js.
+  retention: {
+    transcriptDays: Number(process.env.RETENTION_TRANSCRIPT_DAYS) || 0,
+    recordingDays: Number(process.env.RETENTION_RECORDING_DAYS) || 0,
+    auditDays: Number(process.env.RETENTION_AUDIT_DAYS) || 0,
+    deleteTwilioRecordings: process.env.RETENTION_DELETE_TWILIO_RECORDINGS === "true",
+  },
 };
 
 function parseAgentDirectory(raw) {

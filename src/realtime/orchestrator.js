@@ -6,6 +6,7 @@ import { scoreCall } from "../ai/score.js";
 import { extractLeadFields } from "../ai/extract.js";
 import * as crm from "../store/crm.js";
 import * as erpnext from "../crm/erpnext.js";
+import { recordDisclosure } from "../store/consent.js";
 import { maybeSendSurvey } from "./survey.js";
 import { getSession, setContact, endSession } from "./sessions.js";
 import { publishToAgent } from "./bus.js";
@@ -53,6 +54,11 @@ export async function doScreenPop(callSid) {
         to: session.to,
         status: "in_progress",
       });
+      // Record the recording/transcription disclosure now that the call row
+      // exists (inbound plays the IVR disclosure at answer time).
+      if (session.direction === "inbound") {
+        await recordDisclosure(callSid, row.id);
+      }
     }
   } else {
     contact = await erpnext.findContactByPhone(session.customerNumber);

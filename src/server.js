@@ -7,6 +7,8 @@ import twilio from "twilio";
 
 import { config } from "./config.js";
 import { validateEnv } from "./validate-env.js";
+import { db } from "./db.js";
+import { log, requestId } from "./logger.js";
 import { tokenRouter } from "./routes/token.js";
 import { voiceRouter } from "./routes/voice.js";
 import { recordingRouter } from "./routes/recording.js";
@@ -17,6 +19,9 @@ import { emailRouter } from "./routes/email.js";
 import { crmRouter } from "./routes/crm.js";
 import { pageGate } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
+import { securityHeaders } from "./middleware/security.js";
+import { ensureCsrfCookie } from "./middleware/csrf.js";
+import { authLimiter, apiLimiter, webhookLimiter } from "./middleware/rateLimit.js";
 
 // Fail fast on bad/insecure config in production (before we bind a port).
 validateEnv();
@@ -25,6 +30,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "..", "public");
 
 const app = express();
+app.disable("x-powered-by");
+
+// Correlation id + structured access logging on every request.
+app.use(requestId);
+
+// Security response headers (CSP, HSTS on https, nosniff, frame-deny, …).
+app.use(securityHeaders);
 
 // Restrictive CORS with credentials. Same-origin requests don't hit CORS at
 // all; only the configured origins may make cross-origin authenticated calls.
@@ -37,9 +49,27 @@ app.use(
 app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
 app.use(express.json());
 
+// Plant the double-submit CSRF cookie so browser pages can echo it back.
+app.use(ensureCsrfCookie);
+
+// ── Liveness + readiness ──
+// /health: process is up (never touches the DB). /ready: dependencies are
+// reachable — returns 503 (fail closed) so a load balancer can drain us.
 app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/ready", async (_req, res) => {
+  if (!db.enabled) return res.json({ ok: true, db: "disabled" });
+  try {
+    await db.query("SELECT 1");
+    res.json({ ok: true, db: "up" });
+  } catch (err) {
+    res.status(503).json({ ok: false, db: "down", error: err.message });
+  }
+});
 
 // Authentication (Google OAuth + Twilio Verify 2FA) — login flow is public.
+// Rate-limited hard on the auth paths: this is the credential-stuffing /
+// OTP-brute surface. (Path-scoped so the limit doesn't apply app-wide.)
+app.use(["/auth", "/2fa", "/logout"], authLimiter);
 app.use(authRouter);
 app.get("/login", (_req, res) => res.sendFile(path.join(publicDir, "login.html")));
 app.get("/2fa", (_req, res) => res.sendFile(path.join(publicDir, "2fa.html")));
@@ -73,14 +103,18 @@ const twilioWebhook = (() => {
   });
 })();
 
-app.use(tokenRouter);
-app.use(aiRouter);
-app.use(crmRouter); // authenticated CRM API (requireAuth inside)
-app.use(emailRouter); // inbound email intake webhook (optional token)
-app.use(messagingRouter); // agent send + conversation list (requireAuth inside)
-app.use(twilioWebhook, voiceRouter);
-app.use(twilioWebhook, recordingRouter);
-app.use(twilioWebhook, messagingWebhookRouter); // provider inbound webhook (signed)
+// Authenticated app API — general per-IP rate limit.
+app.use(apiLimiter, tokenRouter);
+app.use(apiLimiter, aiRouter);
+app.use(apiLimiter, crmRouter); // authenticated CRM API (requireAuth + CSRF inside)
+app.use(apiLimiter, messagingRouter); // agent send + conversation list (requireAuth + CSRF inside)
+
+// Webhooks — separate, looser budget (providers can burst). Twilio routes are
+// additionally signature-validated; email intake uses an optional shared token.
+app.use(webhookLimiter, emailRouter); // inbound email intake webhook (optional token)
+app.use(webhookLimiter, twilioWebhook, voiceRouter);
+app.use(webhookLimiter, twilioWebhook, recordingRouter);
+app.use(webhookLimiter, twilioWebhook, messagingWebhookRouter); // provider inbound webhook (signed)
 
 // Single HTTP server shared by Express and the agent WebSocket channel.
 const server = http.createServer(app);

@@ -1,14 +1,18 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../auth/middleware.js";
+import { csrfProtect } from "../middleware/csrf.js";
+import { audit, listAudit } from "../audit.js";
+import { getConsentForCall } from "../store/consent.js";
 import * as crm from "../store/crm.js";
 
 /**
  * Authenticated CRM API over the Postgres store. All routes require a full
- * session. Returns 503 when the database isn't configured.
+ * session (viewer role or above). Writes require the agent role and a valid
+ * CSRF token. Returns 503 when the database isn't configured.
  */
 export const crmRouter = Router();
 
-crmRouter.use("/api/crm", requireAuth, (req, res, next) => {
+crmRouter.use("/api/crm", requireAuth, requireRole("viewer"), csrfProtect, (req, res, next) => {
   if (!crm.crmDbEnabled) return res.status(503).json({ error: "CRM database not configured" });
   next();
 });
@@ -27,6 +31,8 @@ crmRouter.get("/api/crm/contacts/:id", async (req, res) => {
   const contact = await crm.getContact(req.params.id);
   if (!contact) return res.status(404).json({ error: "contact not found" });
   const calls = await crm.listCalls({ contactId: contact.id });
+  // Viewing a contact record touches PII — record who looked.
+  audit({ req, action: "contact.view", entityType: "contact", entityId: contact.id });
   res.json({ contact, calls });
 });
 
@@ -36,6 +42,13 @@ crmRouter.patch("/api/crm/contacts/:id", requireRole("agent"), async (req, res) 
   if (!contact) return res.status(404).json({ error: "contact not found" });
   const updated = await crm.updateContactFields(contact.id, req.body || {});
   // updateContactFields returns null when no whitelisted field changed.
+  audit({
+    req,
+    action: "contact.update",
+    entityType: "contact",
+    entityId: contact.id,
+    detail: { fields: Object.keys(req.body || {}) },
+  });
   res.json({ contact: updated || contact });
 });
 
@@ -48,5 +61,19 @@ crmRouter.get("/api/crm/calls", async (req, res) => {
 crmRouter.get("/api/crm/calls/:sid", async (req, res) => {
   const detail = await crm.getCallDetail(req.params.sid);
   if (!detail) return res.status(404).json({ error: "call not found" });
-  res.json(detail);
+  // Include consent/recording state + history for compliance visibility.
+  const consent = await getConsentForCall(req.params.sid);
+  audit({ req, action: "call.view", entityType: "call", entityId: req.params.sid });
+  res.json({ ...detail, consent });
+});
+
+// ── audit log (admin only) ──
+crmRouter.get("/api/crm/audit", requireRole("admin"), async (req, res) => {
+  const entries = await listAudit({
+    limit: req.query.limit,
+    actor: req.query.actor,
+    action: req.query.action,
+    entityId: req.query.entityId,
+  });
+  res.json({ entries });
 });

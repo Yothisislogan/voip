@@ -4,6 +4,7 @@ import { config, webhookUrl } from "../config.js";
 import { recordCall, updateCallStatus } from "../services/calls.js";
 import { startSession, identityFromClient } from "../realtime/sessions.js";
 import { doScreenPop, onUtterance, onCallComplete } from "../realtime/orchestrator.js";
+import { runTracked } from "../jobs/deadletter.js";
 
 const { VoiceResponse } = twilio.twiml;
 export const voiceRouter = Router();
@@ -84,8 +85,8 @@ voiceRouter.post("/voice/outbound", async (req, res) => {
 
   res.type("text/xml").send(twiml.toString());
 
-  // Pop the customer's CRM record onto the agent's screen (best-effort).
-  doScreenPop(callSid).catch((e) => console.error("screen-pop failed:", e.message));
+  // Pop the customer's CRM record onto the agent's screen (best-effort, tracked).
+  runTracked("screenPop", { callSid }, () => doScreenPop(callSid));
 });
 
 /**
@@ -144,8 +145,9 @@ voiceRouter.post("/voice/inbound", async (req, res) => {
 
   res.type("text/xml").send(twiml.toString());
 
-  // Pop the caller's CRM record onto the agent's screen (best-effort).
-  doScreenPop(callSid).catch((e) => console.error("screen-pop failed:", e.message));
+  // Screen-pop resolves the contact, creates the call row, AND records the
+  // recording/transcription disclosure for two-party consent (best-effort, tracked).
+  runTracked("screenPop", { callSid }, () => doScreenPop(callSid));
 });
 
 /**
@@ -211,14 +213,12 @@ voiceRouter.post("/voice/transcription", (req, res) => {
       transcript = "";
     }
     if (transcript) {
-      onUtterance(callSid, req.body.Track, transcript).catch((e) =>
-        console.error("onUtterance failed:", e.message)
+      runTracked("onUtterance", { callSid, track: req.body.Track, transcript }, () =>
+        onUtterance(callSid, req.body.Track, transcript)
       );
     }
   } else if (event === "transcription-stopped") {
-    onCallComplete(callSid).catch((e) =>
-      console.error("onCallComplete failed:", e.message)
-    );
+    runTracked("onCallComplete", { callSid }, () => onCallComplete(callSid));
   }
 
   res.sendStatus(204);

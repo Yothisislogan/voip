@@ -55,7 +55,16 @@ const STAGES=["lead","contact","customer","lost"];
 let activeId=null;
 let canEdit=true; // set from /auth/me — viewers are read-only
 
-async function api(path,opts){const r=await fetch(path,{credentials:"same-origin",...opts});if(r.status===401){location.href="/login";throw new Error("unauth")}if(r.status===503)throw new Error("CRM database not configured");return r}
+function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)wit_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):""}
+async function api(path,opts={}){
+  const method=(opts.method||"GET").toUpperCase();
+  const headers={...(opts.headers||{})};
+  if(method!=="GET"&&method!=="HEAD")headers["X-CSRF-Token"]=csrfToken();
+  const r=await fetch(path,{credentials:"same-origin",...opts,headers});
+  if(r.status===401){location.href="/login";throw new Error("unauth")}
+  if(r.status===503)throw new Error("CRM database not configured");
+  return r;
+}
 
 async function search(){
   const q=document.getElementById("q").value.trim();

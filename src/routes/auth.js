@@ -5,6 +5,7 @@ import { googleConfigured, authUrl, exchangeCodeForProfile } from "../auth/googl
 import { findAgentByEmail } from "../auth/agents.js";
 import { twoFactorEnforced, startVerification, checkVerification } from "../auth/twofactor.js";
 import { normalizeRole } from "../auth/middleware.js";
+import { audit } from "../audit.js";
 import {
   signToken,
   verifyToken,
@@ -48,6 +49,7 @@ authRouter.post("/auth/dev", (req, res) => {
     role: agent?.role || "admin", // dev login defaults to admin for testing
   });
   console.warn(`⚠️  DEV LOGIN used for identity "${identity}" — disable DEV_LOGIN_ENABLED in production.`);
+  audit({ req, actor: { identity, email: agent?.email, role: agent?.role || "admin" }, action: "auth.login", detail: { method: "dev" } });
   res.setHeader("Set-Cookie", cookieHeader(cookieName, token, ttl));
   res.redirect("/agent.html");
 });
@@ -100,6 +102,7 @@ authRouter.get("/auth/google/callback", async (req, res) => {
       level: "full",
       role: agent.role,
     });
+    audit({ req, actor: { identity: agent.identity, email, role: agent.role }, action: "auth.login", detail: { method: "google", twoFactor: false } });
     res.setHeader("Set-Cookie", [clearState, cookieHeader(cookieName, token, ttl)]);
     res.redirect("/agent.html");
   } catch (err) {
@@ -127,6 +130,7 @@ authRouter.post("/2fa", async (req, res) => {
     level: "full",
     role: agent.role,
   });
+  audit({ req, actor: { identity: agent.identity, email: pending.email, role: agent.role }, action: "auth.login", detail: { method: "google", twoFactor: true } });
   res.setHeader("Set-Cookie", cookieHeader(cookieName, token, ttl));
   res.redirect("/agent.html");
 });

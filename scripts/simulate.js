@@ -163,6 +163,27 @@ async function run() {
     (detail.score && (detail.score.score >= 50 || /bind|won|quote/i.test(detail.score.outcome || ""))),
     `score=${detail.score?.score} outcome=${detail.score?.outcome}`);
 
+  // Consent/recording state tracked (two-party consent disclosure at answer time).
+  check("recording/transcription disclosure recorded",
+    detail.consent && detail.consent.state && detail.consent.state.consent_state === "disclosed",
+    `consent=${JSON.stringify(detail.consent?.state)}`);
+  check("consent event history present",
+    detail.consent && Array.isArray(detail.consent.events) &&
+      detail.consent.events.some((e) => e.kind === "disclosure"),
+    `events=${detail.consent?.events?.length}`);
+
+  // ── Security headers on a normal response ──
+  console.log("4b) security headers");
+  const hres = await fetch(`${BASE}/health`);
+  check("X-Content-Type-Options: nosniff", hres.headers.get("x-content-type-options") === "nosniff");
+  check("Content-Security-Policy present", !!hres.headers.get("content-security-policy"));
+  check("X-Frame-Options: DENY", hres.headers.get("x-frame-options") === "DENY");
+  check("X-Request-Id echoed for tracing", !!hres.headers.get("x-request-id"));
+
+  // ── Readiness reflects DB health ──
+  const ready = await getJson("/ready");
+  check("/ready reports DB up", ready && ready.ok === true && ready.db === "up", `ready=${JSON.stringify(ready)}`);
+
   // ── 5. Inbound SMS (Twilio Conversations webhook) ──
   console.log("5) inbound SMS webhook");
   const sms = await twilioPost("/messaging/inbound", {

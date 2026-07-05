@@ -48,6 +48,14 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   }
   if (!config.databaseUrl) warn.push("DATABASE_URL not set — the Postgres CRM/pipeline is disabled.");
 
+  // ── Hardening (fatal/warn in production) ──
+  if (isProd && config.auth.required && !config.security.csrfEnabled) {
+    fatal.push("CSRF_ENABLED=false with auth on — browser POST/PATCH would be forgeable. Enable CSRF.");
+  }
+  if (isProd && config.databaseUrl && !config.retention.transcriptDays && !config.retention.recordingDays) {
+    warn.push("No data-retention window set (RETENTION_TRANSCRIPT_DAYS / RETENTION_RECORDING_DAYS) — PII is kept forever.");
+  }
+
   // ── Report ──
   for (const w of warn) console.warn(`⚠️  ${w}`);
   for (const f of fatal) console.error(`❌ ${f}`);

@@ -33,7 +33,9 @@ Pairs with `docs/deploy-hetzner.md` (Docker) and `docs/backups.md`.
 - [ ] Twilio: account SID, API key/secret, TwiML app SID, caller ID, `TWILIO_AUTH_TOKEN`.
 - [ ] Pick `LLM_BACKEND` (default `rules`; coaching stays local).
 - [ ] `docker compose up -d --build` → check `docker compose logs -f app` for **"Schema applied"** and **no ❌ fatal config** lines (production validation fails fast).
-- [ ] `curl -s http://localhost:3000/health` → `{"ok":true}`.
+- [ ] `curl -s http://localhost:3000/health` → `{"ok":true}`; `curl -s http://localhost:3000/ready` → `{"ok":true,"db":"up"}`.
+- [ ] Point the LB liveness probe at `/health` and the readiness/drain probe at `/ready`.
+- [ ] Confirm hardening defaults: `CSRF_ENABLED` on, rate limits set, `LOG_LEVEL=info` (see `docs/operations.md`).
 
 ## 4. TLS origin (Caddy)
 
@@ -59,6 +61,8 @@ Pairs with `docs/deploy-hetzner.md` (Docker) and `docs/backups.md`.
 - [ ] Confirm migrations applied: `docker compose exec db psql -U wit -d wit -c '\dt'`.
 - [ ] Add the cron backup (see `docs/backups.md`) and **sync backups off-box**.
 - [ ] Verify the backup round trip: `DATABASE_URL=… npm run restore-test` (dumps, restores into a scratch DB, checks row counts, drops it).
+- [ ] Set a data-retention window (`RETENTION_TRANSCRIPT_DAYS` / `RETENTION_RECORDING_DAYS`) and cron `npm run purge-retention` daily (see `docs/operations.md`).
+- [ ] Cron `npm run retry-jobs` every few minutes to drain the dead-letter queue (`failed_jobs`).
 
 ## 7. Smoke test (production)
 

@@ -10,6 +10,8 @@
     "migrate": "node scripts/migrate.js",
     "restore-test": "node scripts/restore-verify.js",
     "simulate": "node scripts/simulate.js",
+    "retry-jobs": "node scripts/retry-jobs.js",
+    "purge-retention": "node scripts/purge-retention.js",
     "test": "node --test"
   },
   "engines": {
