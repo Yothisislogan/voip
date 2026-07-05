@@ -110,16 +110,38 @@ export function extractVin(text) {
 }
 
 // Date of birth near a birth keyword → ISO YYYY-MM-DD.
-export function extractDob(text) {
-  const m = String(text).match(
-    /\b(?:d\.?o\.?b\.?|date of birth|born(?: on)?|birthday)\b[^0-9]{0,12}(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/i
-  );
-  if (!m) return null;
-  const mm = +m[1], dd = +m[2];
-  let yyyy = +m[3];
+const MONTHS = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+const BIRTH_KEY = "(?:d\\.?o\\.?b\\.?|date of birth|born(?: on)?|birthday)";
+
+function isoDate(yyyy, mm, dd) {
   if (yyyy < 100) yyyy = yyyy <= 25 ? 2000 + yyyy : 1900 + yyyy;
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
   return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+}
+
+export function extractDob(text) {
+  const s = String(text);
+  // Numeric: 3/4/1985, 03-04-85, etc.
+  const num = s.match(
+    new RegExp(`\\b${BIRTH_KEY}\\b[^0-9]{0,12}(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{2,4})`, "i")
+  );
+  if (num) return isoDate(+num[3], +num[1], +num[2]);
+
+  // Month-name: "March 4th, 1985", "born on Mar 4 1985" — how callers actually say it.
+  const mon = s.match(
+    new RegExp(
+      `\\b${BIRTH_KEY}\\b[^0-9]{0,15}?([a-z]{3,9})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{2,4})`,
+      "i"
+    )
+  );
+  if (mon) {
+    const mm = MONTHS[mon[1].slice(0, 3).toLowerCase()];
+    if (mm) return isoDate(+mon[3], mm, +mon[2]);
+  }
+  return null;
 }
 
 export function extractAddress(text) {

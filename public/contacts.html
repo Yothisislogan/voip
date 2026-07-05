@@ -53,6 +53,7 @@ const scoreColor=n=>n>=70?"#1FA85A":n>=40?"#F5A623":"#E5484D";
 const EDIT=[["first_name","First name"],["last_name","Last name"],["email","Email"],["company","Company"],["title","Title"],["policy_type","Policy type"],["carrier","Carrier"],["premium","Premium"],["policy_number","Policy #"],["renewal_date","Renewal date"],["coverage_status","Coverage status"]];
 const STAGES=["lead","contact","customer","lost"];
 let activeId=null;
+let canEdit=true; // set from /auth/me — viewers are read-only
 
 async function api(path,opts){const r=await fetch(path,{credentials:"same-origin",...opts});if(r.status===401){location.href="/login";throw new Error("unauth")}if(r.status===503)throw new Error("CRM database not configured");return r}
 
@@ -93,13 +94,17 @@ async function openContact(id){
       <div class="f"><label>Drivers (extracted)</label><div class="ro">${esc((contact.drivers||[]).join(", ")||"—")}</div></div>
       <div class="f"><label>Business (extracted)</label><div class="ro">${esc([contact.business_name,contact.business_type].filter(Boolean).join(" · ")||"—")}</div></div>
     </div>
-    <div class="bar"><button class="btn" id="save">Save</button><button class="btn ghost" onclick="location.reload()">Reset</button><span class="saved" id="saved"></span></div>
+    ${canEdit?`<div class="bar"><button class="btn" id="save">Save</button><button class="btn ghost" onclick="location.reload()">Reset</button><span class="saved" id="saved"></span></div>`:`<div class="bar"><span class="saved" style="color:#8a8f98">Read-only (viewer role)</span></div>`}
     <div class="calls"><h3>Recent calls</h3>${calls.length?calls.map(c=>`
       <a class="call" href="/call.html?sid=${encodeURIComponent(c.twilio_call_sid)}">
         <span>${esc(c.direction||"call")} · ${fmtDate(c.created_at)}</span>
         <span>${c.score!=null?`<span class="badge" style="background:${scoreColor(c.score)}">${c.score}</span>`:""} ${esc((c.outcome||"").replace(/_/g," "))}</span>
       </a>`).join(""):"<div class='empty' style='margin:10px 0'>No calls yet.</div>"}</div>`;
-  document.getElementById("save").onclick=()=>save(id);
+  if(canEdit){
+    document.getElementById("save").onclick=()=>save(id);
+  }else{
+    document.querySelectorAll("#form [data-k]").forEach(el=>{el.setAttribute("disabled","");});
+  }
   search(); // refresh active highlight
 }
 
@@ -112,7 +117,10 @@ async function save(id){
 function fmtDate(d){if(!d)return "";try{return new Date(d).toLocaleDateString()}catch{return String(d)}}
 
 let timer;document.getElementById("q").oninput=()=>{clearTimeout(timer);timer=setTimeout(search,250)};
-search().then(()=>{const id=new URLSearchParams(location.search).get("id");if(id)openContact(id)}).catch(e=>{document.getElementById("rows").innerHTML=`<div class='empty'>${esc(e.message)}</div>`});
+// Learn the signed-in role first so the detail pane renders read-only for viewers.
+fetch("/auth/me",{credentials:"same-origin"}).then(r=>r.ok?r.json():null).then(me=>{canEdit=!me||me.role!=="viewer";}).catch(()=>{}).finally(()=>{
+  search().then(()=>{const id=new URLSearchParams(location.search).get("id");if(id)openContact(id)}).catch(e=>{document.getElementById("rows").innerHTML=`<div class='empty'>${esc(e.message)}</div>`});
+});
 </script>
 </body>
 </html>

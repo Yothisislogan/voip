@@ -15,6 +15,13 @@ test("extractDob parses birth dates to ISO", () => {
   assert.equal(extractDob("no date"), null);
 });
 
+test("extractDob parses spoken month-name dates (how callers say it)", () => {
+  assert.equal(extractDob("My date of birth is March 4th, 1985."), "1985-03-04");
+  assert.equal(extractDob("born on Mar 4 1985"), "1985-03-04");
+  assert.equal(extractDob("date of birth: December 12th, 1990"), "1990-12-12");
+  assert.equal(extractDob("my birthday is the best"), null); // no numeric year → no false match
+});
+
 test("extractAddress captures a street address", () => {
   assert.match(extractAddress("I live at 123 Main Street, Phoenix AZ 85001 now"), /123 Main Street/);
   assert.equal(extractAddress("no address"), null);

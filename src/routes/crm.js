@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth } from "../auth/middleware.js";
+import { requireAuth, requireRole } from "../auth/middleware.js";
 import * as crm from "../store/crm.js";
 
 /**
@@ -30,7 +30,8 @@ crmRouter.get("/api/crm/contacts/:id", async (req, res) => {
   res.json({ contact, calls });
 });
 
-crmRouter.patch("/api/crm/contacts/:id", async (req, res) => {
+// Editing CRM data requires at least the agent role; viewers are read-only.
+crmRouter.patch("/api/crm/contacts/:id", requireRole("agent"), async (req, res) => {
   const contact = await crm.getContact(req.params.id);
   if (!contact) return res.status(404).json({ error: "contact not found" });
   const updated = await crm.updateContactFields(contact.id, req.body || {});

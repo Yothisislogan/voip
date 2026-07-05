@@ -40,8 +40,25 @@ Restoring into a fresh database also recreates the schema (the dump is a full
 `pg_dump`). After restoring, re-run `npm run migrate` — it's idempotent and will
 apply any migrations newer than the dump.
 
+## Verify the round trip (automated)
+
+An untested backup is not a backup. `npm run restore-test` proves the whole
+cycle without touching your live data:
+
+```bash
+DATABASE_URL=postgresql://user:pass@host:5432/wit npm run restore-test
+```
+
+It dumps the live DB, restores it into a throwaway scratch database, compares
+the table set and per-table row counts (source vs restore), confirms migrations
+report "up to date" on the restore (no schema drift), then drops the scratch
+database. Exits non-zero on any mismatch, so it can gate a deploy or run on a
+schedule. Requires `pg_dump`/`psql`/`createdb`/`dropdb` on PATH and permission
+to `CREATE DATABASE` on the server.
+
 ## Notes
 
-- Test a restore periodically — an untested backup is not a backup.
+- Run `npm run restore-test` periodically (e.g. weekly) — an untested backup is
+  not a backup.
 - The dump contains customer PII. Encrypt at rest and restrict access
   (see `docs/secure-ai-architecture.md`).

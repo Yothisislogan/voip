@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth } from "../auth/middleware.js";
+import { requireAuth, requireRole } from "../auth/middleware.js";
 import { handleInbound, sendReply, viewConversation } from "../messaging/orchestrator.js";
 import { conversations } from "../messaging/conversations.js";
 
@@ -26,8 +26,8 @@ messagingRouter.get("/messaging/conversations", requireAuth, (req, res) => {
   res.json({ conversations: list });
 });
 
-// Agent sends a reply on a conversation.
-messagingRouter.post("/messaging/send", requireAuth, async (req, res) => {
+// Agent sends a reply on a conversation — viewers cannot send.
+messagingRouter.post("/messaging/send", requireAuth, requireRole("agent"), async (req, res) => {
   const { conversationId, text } = req.body || {};
   if (!conversationId || !text?.trim()) {
     return res.status(400).json({ error: "conversationId and text are required" });

@@ -8,13 +8,43 @@ import { readSession, readSessionFromCookieString } from "./session.js";
  * touches customer data: the token endpoint, the agent page, and the WebSocket.
  */
 
+// Role hierarchy: viewer (read-only) < agent (handle calls/edit) < admin (all).
+export const ROLE_RANK = { viewer: 1, agent: 2, admin: 3 };
+export function roleAtLeast(role, min) {
+  return (ROLE_RANK[role] || 0) >= (ROLE_RANK[min] || 0);
+}
+export function normalizeRole(role) {
+  const r = String(role || "").toLowerCase();
+  return ROLE_RANK[r] ? r : "agent";
+}
+
 function devAgent() {
-  return { identity: config.auth.devIdentity, email: "dev@local", name: "Dev (auth disabled)" };
+  // Dev bypass gets admin so all surfaces are testable.
+  return { identity: config.auth.devIdentity, email: "dev@local", name: "Dev (auth disabled)", role: "admin" };
 }
 
 function agentFromSession(payload) {
   if (!payload || payload.level !== "full") return null;
-  return { identity: payload.identity, email: payload.email, name: payload.name };
+  return {
+    identity: payload.identity,
+    email: payload.email,
+    name: payload.name,
+    role: normalizeRole(payload.role),
+  };
+}
+
+/**
+ * Role gate — use AFTER requireAuth. Returns a middleware that 403s when the
+ * authenticated agent's role is below `min`.
+ */
+export function requireRole(min) {
+  return (req, res, next) => {
+    if (!req.agent) return res.status(401).json({ error: "authentication required" });
+    if (!roleAtLeast(req.agent.role, min)) {
+      return res.status(403).json({ error: `requires ${min} role` });
+    }
+    next();
+  };
 }
 
 /** API gate — 401 JSON on failure (used by /token). */

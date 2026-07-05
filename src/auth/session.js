@@ -99,9 +99,9 @@ export function parseCookieString(header) {
 const PENDING_TTL = 10 * 60; // 10 minutes to complete 2FA
 
 /** Issue a session token. level: "pending-2fa" | "full". */
-export function issueSession({ email, identity, name, level }) {
+export function issueSession({ email, identity, name, level, role }) {
   const ttl = level === "full" ? config.auth.sessionTtlSec : PENDING_TTL;
-  const token = signToken({ email, identity, name, level, typ: "session" }, ttl);
+  const token = signToken({ email, identity, name, level, role, typ: "session" }, ttl);
   return { token, ttl };
 }
 

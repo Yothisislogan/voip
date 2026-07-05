@@ -55,10 +55,23 @@ app.use((req, res, next) => {
 app.use(express.static(publicDir));
 
 // Validate X-Twilio-Signature on all webhook routes.
+// Twilio signs against the exact public URL it was configured with, so we must
+// reconstruct that URL to match. twilio.webhook() expects `host` (and optional
+// `protocol`) SEPARATELY — passing a full scheme-qualified URL as `host` yields
+// a doubled scheme (https://https://…) and rejects every real webhook. Split
+// PUBLIC_BASE_URL into protocol + host so the reconstructed URL is correct.
 // TODO(prod): remove the config.publicBaseUrl guard once PUBLIC_BASE_URL is always set.
-const twilioWebhook = config.publicBaseUrl
-  ? twilio.webhook({ authToken: process.env.TWILIO_AUTH_TOKEN, host: config.publicBaseUrl })
-  : (_req, _res, next) => next(); // dev-only bypass when no public URL is set
+const twilioWebhook = (() => {
+  if (!config.publicBaseUrl) {
+    return (_req, _res, next) => next(); // dev-only bypass when no public URL is set
+  }
+  const pub = new URL(config.publicBaseUrl);
+  return twilio.webhook({
+    authToken: process.env.TWILIO_AUTH_TOKEN,
+    protocol: pub.protocol.replace(/:$/, ""), // "https:" -> "https"
+    host: pub.host, // hostname[:port], no scheme
+  });
+})();
 
 app.use(tokenRouter);
 app.use(aiRouter);

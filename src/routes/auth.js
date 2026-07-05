@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import { googleConfigured, authUrl, exchangeCodeForProfile } from "../auth/google.js";
 import { findAgentByEmail } from "../auth/agents.js";
 import { twoFactorEnforced, startVerification, checkVerification } from "../auth/twofactor.js";
+import { normalizeRole } from "../auth/middleware.js";
 import {
   signToken,
   verifyToken,
@@ -44,6 +45,7 @@ authRouter.post("/auth/dev", (req, res) => {
     identity,
     name: agent?.name || `${identity} (dev login)`,
     level: "full",
+    role: agent?.role || "admin", // dev login defaults to admin for testing
   });
   console.warn(`⚠️  DEV LOGIN used for identity "${identity}" — disable DEV_LOGIN_ENABLED in production.`);
   res.setHeader("Set-Cookie", cookieHeader(cookieName, token, ttl));
@@ -83,6 +85,7 @@ authRouter.get("/auth/google/callback", async (req, res) => {
         identity: agent.identity,
         name: name || agent.name,
         level: "pending-2fa",
+        role: agent.role,
       });
       const sent = await startVerification(agent);
       res.setHeader("Set-Cookie", [clearState, cookieHeader(cookieName, token, ttl)]);
@@ -95,6 +98,7 @@ authRouter.get("/auth/google/callback", async (req, res) => {
       identity: agent.identity,
       name: name || agent.name,
       level: "full",
+      role: agent.role,
     });
     res.setHeader("Set-Cookie", [clearState, cookieHeader(cookieName, token, ttl)]);
     res.redirect("/agent.html");
@@ -121,6 +125,7 @@ authRouter.post("/2fa", async (req, res) => {
     identity: agent.identity,
     name: pending.name,
     level: "full",
+    role: agent.role,
   });
   res.setHeader("Set-Cookie", cookieHeader(cookieName, token, ttl));
   res.redirect("/agent.html");
@@ -146,11 +151,17 @@ authRouter.post("/logout", (req, res) => {
 // ── Who am I (for the agent UI) ──
 authRouter.get("/auth/me", (req, res) => {
   if (!config.auth.required) {
-    return res.json({ identity: config.auth.devIdentity, name: "Dev", email: "dev@local", authDisabled: true });
+    return res.json({
+      identity: config.auth.devIdentity,
+      name: "Dev",
+      email: "dev@local",
+      role: "admin",
+      authDisabled: true,
+    });
   }
   const s = verifyToken(readCookie(req, cookieName));
   if (!s || s.typ !== "session" || s.level !== "full") {
     return res.status(401).json({ error: "not authenticated" });
   }
-  res.json({ identity: s.identity, name: s.name, email: s.email });
+  res.json({ identity: s.identity, name: s.name, email: s.email, role: normalizeRole(s.role) });
 });

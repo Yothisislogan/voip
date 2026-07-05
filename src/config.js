@@ -144,7 +144,13 @@ function parseAgentDirectory(raw) {
   if (!raw) return [];
   try {
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
+    if (!Array.isArray(arr)) return [];
+    // Normalize role: viewer | agent | admin. Unknown/missing → agent.
+    const ROLES = new Set(["viewer", "agent", "admin"]);
+    return arr.map((a) => {
+      const role = String(a?.role || "").toLowerCase();
+      return { ...a, role: ROLES.has(role) ? role : "agent" };
+    });
   } catch (err) {
     console.warn(`⚠️  AGENT_DIRECTORY is not valid JSON — no agents loaded: ${err.message}`);
     return [];
