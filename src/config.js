@@ -102,6 +102,20 @@ export const config = {
   recapEnabled: process.env.RECAP_ENABLED !== "false",
   coachingThrottleMs: Number(process.env.COACHING_THROTTLE_MS) || 6000,
 
+  // Post-call survey SMS follow-up (opt-in).
+  survey: {
+    enabled: process.env.SURVEY_ENABLED === "true",
+    text:
+      process.env.SURVEY_TEXT ||
+      "Thanks for speaking with We Insure Things! How likely are you to recommend us? Reply 1-5.",
+  },
+
+  // Inbound email intake (SendGrid/Mailgun inbound-parse webhook).
+  emailIntake: {
+    enabled: process.env.EMAIL_INTAKE_ENABLED !== "false",
+    token: process.env.EMAIL_INBOUND_TOKEN || null, // optional shared secret
+  },
+
   auth: {
     required: process.env.AUTH_REQUIRED !== "false",
     devIdentity: process.env.DEV_IDENTITY || "marisol.vega",

@@ -21,6 +21,8 @@ export function startSession(callSid, data) {
     from: data.from || null,
     to: data.to || null,
     contact: null,
+    contactId: null, // Postgres contacts.id, once matched
+    segSeq: 0, // next transcript_segments.seq for this call
     throttledAt: 0,
     startedAt: Date.now(),
   });

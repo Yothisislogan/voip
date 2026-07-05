@@ -12,6 +12,7 @@ import { recordingRouter } from "./routes/recording.js";
 import { authRouter } from "./routes/auth.js";
 import { aiRouter } from "./routes/ai.js";
 import { messagingRouter, messagingWebhookRouter } from "./routes/messaging.js";
+import { emailRouter } from "./routes/email.js";
 import { pageGate } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
 
@@ -56,6 +57,7 @@ const twilioWebhook = config.publicBaseUrl
 
 app.use(tokenRouter);
 app.use(aiRouter);
+app.use(emailRouter); // inbound email intake webhook (optional token)
 app.use(messagingRouter); // agent send + conversation list (requireAuth inside)
 app.use(twilioWebhook, voiceRouter);
 app.use(twilioWebhook, recordingRouter);

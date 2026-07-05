@@ -196,6 +196,37 @@ POST /messaging/inbound ─▶ normalize ─▶ conversation buffer ─▶ ERPNe
 Setup: create a **Twilio Conversations** service, set `TWILIO_CONVERSATIONS_SERVICE_SID`,
 and point its `onMessageAdded` webhook at `{PUBLIC_BASE_URL}/messaging/inbound`.
 
+## Postgres CRM & data pipeline
+
+With `DATABASE_URL` set, the app owns a **Postgres CRM** as its operational store
+(schema in `db/schema.sql`, applied via `npm run migrate`). The call/message
+pipeline reads and writes it; ERPNext remains an optional external mirror.
+
+| Table | Filled by |
+| --- | --- |
+| `contacts` (leads) | phone match on call/SMS; email intake; AI-extracted insurance fields |
+| `calls` | each call, linked to a contact |
+| `transcript_segments` | every finalized utterance (persistent) |
+| `call_scores` | 0–100 lead/quality score + factors, per call |
+| `surveys` | post-call CSAT/NPS SMS + captured reply |
+| `email_intake` | parsed inbound emails → leads |
+
+What happens on a call, when `DATABASE_URL` is set:
+
+1. **Screen-pop** matches/creates the caller by phone (`contacts`) and opens a `calls` row.
+2. Each utterance is **persisted** to `transcript_segments` (alongside the in-memory buffer used for live coaching).
+3. On hang-up: the recap runs, the call is **scored** (`call_scores`), **lead fields are extracted** from the transcript onto the contact, and (opt-in) a **survey SMS** is sent — the reply is matched back and stored.
+
+**Email intake:** point a SendGrid/Mailgun inbound-parse webhook at
+`/email/inbound`; it parses the sender, phone, and insurance details into a
+lead. Optional shared secret via `EMAIL_INBOUND_TOKEN`.
+
+**Scoring & extraction are local/deterministic** — no LLM required — so they work
+regardless of `LLM_BACKEND`.
+
+**Deploy:** `docker compose up -d --build` runs the app + Postgres and applies
+the schema automatically. See `docs/deploy-hetzner.md`.
+
 ## Authentication (Google OAuth + 2FA)
 
 The app pages, the Twilio token endpoint, and the agent WebSocket all require an

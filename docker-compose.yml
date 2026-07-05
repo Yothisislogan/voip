@@ -1,0 +1,43 @@
+# WIT Connect — app + Postgres for Hetzner (or any Docker host).
+# Fill .env (copy from .env.example), then: docker compose up -d --build
+# See docs/deploy-hetzner.md.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-witpass}
+      POSTGRES_DB: wit
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wit -d wit"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Overrides whatever is in .env — points at the db service.
+      DATABASE_URL: postgresql://wit:${POSTGRES_PASSWORD:-witpass}@db:5432/wit
+      PORT: "3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Apply the schema (idempotent) then start the server.
+    command: sh -c "npm run migrate && node src/server.js"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

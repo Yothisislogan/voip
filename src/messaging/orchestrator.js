@@ -2,6 +2,8 @@ import { config } from "../config.js";
 import { conversations, normalizeTwilioConversations } from "./conversations.js";
 import { sendOutbound } from "./providers.js";
 import { findContactByPhone, logChatMessage } from "../crm/erpnext.js";
+import * as crm from "../store/crm.js";
+import { parseSurveyRating } from "../realtime/survey.js";
 import { publishToAgent } from "../realtime/bus.js";
 
 /**
@@ -73,7 +75,24 @@ export async function handleInbound(body, now = Date.now()) {
     direction: "Received",
   }).catch(() => {});
 
+  // If this is a reply to an open post-call survey, record the rating.
+  captureSurveyReply(msg.customerPhone, msg.text).catch(() => {});
+
   return msg;
+}
+
+/** Match an inbound SMS to an open survey for that customer and record it. */
+async function captureSurveyReply(customerPhone, text) {
+  if (!crm.crmDbEnabled || !customerPhone) return;
+  const contact = await crm.getContactByPhone(customerPhone);
+  if (!contact) return;
+  const survey = await crm.findOpenSurveyByContact(contact.id);
+  if (!survey) return;
+  await crm.recordSurveyResponse({
+    surveyId: survey.id,
+    rating: parseSurveyRating(text),
+    responseText: text,
+  });
 }
 
 /**
