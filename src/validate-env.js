@@ -48,6 +48,13 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   }
   if (!config.databaseUrl) warn.push("DATABASE_URL not set — the Postgres CRM/pipeline is disabled.");
 
+  // AI backends: a Groq backend selected without a key silently falls back to
+  // rules — warn so it isn't mistaken for "Groq is running".
+  const backends = [config.llm.coachingBackend, config.llm.recapBackend, config.llm.automationBackend];
+  if (backends.includes("groq") && !config.llm.groq.apiKey) {
+    warn.push("An LLM backend is set to 'groq' but GROQ_API_KEY is missing — those tasks fall back to local rules.");
+  }
+
   // ── Hardening (fatal/warn in production) ──
   if (isProd && config.auth.required && !config.security.csrfEnabled) {
     fatal.push("CSRF_ENABLED=false with auth on — browser POST/PATCH would be forgeable. Enable CSRF.");

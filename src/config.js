@@ -75,7 +75,26 @@ export const config = {
       ((process.env.LLM_BACKEND || "rules").toLowerCase() === "ollama" ? "ollama" : "rules")
     ).toLowerCase(),
     recapBackend: (process.env.LLM_RECAP_BACKEND || process.env.LLM_BACKEND || "rules").toLowerCase(),
+    // Automation = heavier, on-demand reasoning (follow-up plans, task creation,
+    // email/SMS drafts, coverage-gap analysis, manager summaries). NEVER runs on
+    // every call — invoked explicitly. Defaults to LLM_BACKEND so it stays local
+    // (rules) unless an operator opts into a cloud model like GPT-OSS 120B.
+    automationBackend: (process.env.LLM_AUTOMATION_BACKEND || process.env.LLM_BACKEND || "rules").toLowerCase(),
     timeoutMs: Number(process.env.LOCAL_LLM_TIMEOUT_MS) || 1200,
+    // Groq (OpenAI-compatible API). Recap/extraction on 70B, coaching on 8B,
+    // automation on GPT-OSS 120B. Rules remain the fallback on any failure.
+    groq: {
+      apiKey: process.env.GROQ_API_KEY || null,
+      baseUrl: (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, ""),
+      recapModel: process.env.GROQ_RECAP_MODEL || "llama-3.3-70b-versatile",
+      coachingModel: process.env.GROQ_COACHING_MODEL || "llama-3.1-8b-instant",
+      automationModel: process.env.GROQ_AUTOMATION_MODEL || "openai/gpt-oss-120b",
+      timeoutMs: Number(process.env.GROQ_TIMEOUT_MS) || 10000,
+      coachingTimeoutMs: Number(process.env.GROQ_COACHING_TIMEOUT_MS) || 2500,
+    },
+    // AI-extracted CRM fields at/above this confidence are auto-applied; the rest
+    // are surfaced to the agent as "AI found these updates. Apply?" suggestions.
+    extractAutoApplyConfidence: Number(process.env.AI_EXTRACT_AUTOAPPLY_CONFIDENCE) || 0.85,
     ollama: {
       baseUrl: (process.env.OLLAMA_BASE_URL || "http://localhost:11434").replace(/\/$/, ""),
       model: process.env.OLLAMA_MODEL || "qwen2.5:0.5b",

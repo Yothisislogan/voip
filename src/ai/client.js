@@ -3,6 +3,7 @@ import { AnthropicBedrockMantle } from "@anthropic-ai/bedrock-sdk";
 import { config } from "../config.js";
 import { rulesStructuredCompletion } from "./providers/rules.js";
 import { ollamaStructuredCompletion } from "./providers/ollama.js";
+import { groqStructuredCompletion } from "./providers/groq.js";
 
 /**
  * AI router for coaching + recap, with PER-TASK backends.
@@ -24,6 +25,7 @@ import { ollamaStructuredCompletion } from "./providers/ollama.js";
 
 export const coachingBackend = normalizeBackend(config.llm.coachingBackend);
 export const recapBackend = normalizeBackend(config.llm.recapBackend);
+export const automationBackend = normalizeBackend(config.llm.automationBackend);
 
 const claudeBackends = [coachingBackend, recapBackend];
 const usesClaude = claudeBackends.some((b) => b === "anthropic" || b === "bedrock");
@@ -56,23 +58,40 @@ export function modelId(bare) {
 }
 
 /**
- * Route a structured completion to the backend for its task. Task is inferred
- * from schemaName: "call_recap" → recap backend, anything else → coaching.
+ * Route a structured completion to the backend for its task, inferred from
+ * schemaName:
+ *   - "call_recap" / "lead_extraction" → recap backend (e.g. Groq 70B)
+ *   - "automation*"                    → automation backend (e.g. GPT-OSS 120B)
+ *   - anything else (coaching_cues)    → coaching backend (local-first)
  */
-export async function structuredCompletion(args) {
-  const isRecap = args.schemaName === "call_recap";
-  const backend = isRecap ? recapBackend : coachingBackend;
+export function backendForSchema(schemaName) {
+  if (schemaName === "call_recap" || schemaName === "lead_extraction") return recapBackend;
+  if (String(schemaName || "").startsWith("automation")) return automationBackend;
+  return coachingBackend;
+}
 
-  if (backend === "rules") return rulesStructuredCompletion(args);
+export async function structuredCompletion(args) {
+  const backend = backendForSchema(args.schemaName);
+
+  if (backend === "groq") return groqStructuredCompletion(args);
   if (backend === "ollama") return ollamaStructuredCompletion(args);
 
   if ((backend === "anthropic" || backend === "bedrock") && anthropic) {
     const res = await claudeStructuredCompletion(args);
-    return res || rulesStructuredCompletion(args); // never leave the caller empty
+    return res ?? rulesFallback(args); // never leave the caller empty
   }
 
-  // Claude requested but no client available (missing key/region) → local.
-  return rulesStructuredCompletion(args);
+  // rules, or an unconfigured cloud backend → deterministic local (or null for
+  // tasks that have no rules equivalent, so the caller can fall back itself).
+  return rulesFallback(args);
+}
+
+// rules provider only knows recap + coaching. Extraction/automation return null.
+function rulesFallback(args) {
+  if (args.schemaName === "call_recap" || args.schemaName === "coaching_cues") {
+    return rulesStructuredCompletion(args);
+  }
+  return null;
 }
 
 async function claudeStructuredCompletion({
@@ -111,7 +130,7 @@ async function claudeStructuredCompletion({
 
 function normalizeBackend(value) {
   const b = String(value || "rules").toLowerCase();
-  if (["rules", "ollama", "anthropic", "bedrock"].includes(b)) return b;
+  if (["rules", "ollama", "anthropic", "bedrock", "groq"].includes(b)) return b;
   console.warn(`Unknown AI backend "${value}"; using rules.`);
   return "rules";
 }
@@ -122,8 +141,12 @@ function logStartup() {
       ? ` (Claude via ${claudeIsBedrock ? "Bedrock" : "API"} ready)`
       : " (Claude requested but not configured — falling back to local)"
     : "";
+  const groqNote =
+    [coachingBackend, recapBackend, automationBackend].includes("groq") && !config.llm.groq.apiKey
+      ? " (Groq requested but GROQ_API_KEY missing — falling back to local)"
+      : "";
   console.log(
-    `AI: coaching=${coachingBackend}, recap=${recapBackend}${claudeNote}. ` +
-      "Live coaching is local-first; rules fallback always on."
+    `AI: coaching=${coachingBackend}, recap=${recapBackend}, automation=${automationBackend}` +
+      `${claudeNote}${groqNote}. Live coaching is local-first; rules fallback always on.`
   );
 }

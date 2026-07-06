@@ -54,3 +54,6 @@ jobs:
 
       - name: Simulate the webhook pipeline end-to-end
         run: npm run simulate
+
+      - name: Simulate the Groq AI pipeline (mock Groq) end-to-end
+        run: npm run simulate:groq

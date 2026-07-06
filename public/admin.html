@@ -101,7 +101,9 @@ async function loadStatus(){
       s.messaging.configured?"Provider configured":"Not fully configured"));
     cards.push(card("ERPNext", `${statusDot(s.erpnext.configured?"ok":"warn")} ${s.erpnext.configured?"Connected":"Not set"}`, "Optional mirror"));
     cards.push(card("Email intake", `${statusDot(s.email.enabled?"ok":"warn")} ${s.email.enabled?"On":"Off"}`, s.email.tokenProtected?"Token-protected":"No token"));
-    cards.push(card("AI backends", `${esc(s.ai.coachingBackend)} / ${esc(s.ai.recapBackend)}`, "coaching / recap"));
+    const groqNeeded=[s.ai.coachingBackend,s.ai.recapBackend,s.ai.automationBackend].includes("groq");
+    cards.push(card("AI backends", `${statusDot(groqNeeded&&!s.ai.groqConfigured?"warn":"ok")} ${esc(s.ai.coachingBackend)} / ${esc(s.ai.recapBackend)} / ${esc(s.ai.automationBackend||"rules")}`,
+      `coaching / recap / automation${groqNeeded?(s.ai.groqConfigured?" · Groq ready":" · GROQ_API_KEY missing"):""}`));
     const q=s.queue||{};
     const qState=q.pending>0||q.exhausted>0?(q.exhausted>0?"bad":"warn"):"ok";
     cards.push(card("Job queue", `${statusDot(qState)} ${q.pending||0} pending`,

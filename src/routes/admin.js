@@ -54,7 +54,12 @@ adminRouter.get("/api/admin/status", async (req, res) => {
     },
     erpnext: { configured: Boolean(config.erpnext.baseUrl && config.erpnext.apiKey) },
     email: { enabled: config.emailIntake.enabled, tokenProtected: Boolean(config.emailIntake.token) },
-    ai: { coachingBackend: config.llm.coachingBackend, recapBackend: config.llm.recapBackend },
+    ai: {
+      coachingBackend: config.llm.coachingBackend,
+      recapBackend: config.llm.recapBackend,
+      automationBackend: config.llm.automationBackend,
+      groqConfigured: Boolean(config.llm.groq.apiKey),
+    },
     queue,
     retention: config.retention,
     backups,

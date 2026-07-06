@@ -4,6 +4,7 @@ import { generateCoaching } from "../ai/coach.js";
 import { generateRecap, formatRecapNote } from "../ai/recap.js";
 import { scoreCall } from "../ai/score.js";
 import { extractLeadFields } from "../ai/extract.js";
+import { extractLeadFieldsAI, mergeAiExtraction } from "../ai/extract-ai.js";
 import * as crm from "../store/crm.js";
 import * as erpnext from "../crm/erpnext.js";
 import { recordDisclosure } from "../store/consent.js";
@@ -134,10 +135,21 @@ export async function onCallComplete(callSid, durationSec) {
       summary: scored.summary,
     });
 
-    // Extract lead fields from the transcript and write them onto the contact.
+    // Extract lead fields. Deterministic regex extraction is the guaranteed
+    // baseline (auto-applied); the LLM extractor (Groq 70B) adds high-confidence
+    // fields and proposes the rest for the agent to confirm ("Apply?").
+    let proposedUpdates = [];
     if (session.contactId) {
       const fields = extractLeadFields(full, recap);
-      if (Object.keys(fields).length) await crm.updateContactFields(session.contactId, fields);
+
+      const aiResult = await extractLeadFieldsAI(full).catch(() => null);
+      const { applied, proposed, nextAction } = mergeAiExtraction(aiResult);
+      proposedUpdates = proposed;
+      if (nextAction) recap.nextSteps = dedupePrepend(recap.nextSteps, nextAction);
+
+      // Deterministic fields first, then overlay high-confidence AI fields.
+      const merged = { ...fields, ...applied };
+      if (Object.keys(merged).length) await crm.updateContactFields(session.contactId, merged);
     }
 
     await crm.completeCall({ callSid, durationSeconds: durationSec, recap });
@@ -163,6 +175,8 @@ export async function onCallComplete(callSid, durationSec) {
         recap,
         score: scored,
         contact: session.contact,
+        contactId: session.contactId || null,
+        proposedUpdates, // low-confidence AI fields for "AI found these updates. Apply?"
         savedToCrm: crm.crmDbEnabled || mirroredToErp,
       });
     }
@@ -172,4 +186,11 @@ export async function onCallComplete(callSid, durationSec) {
     transcripts.clear(callSid);
     endSession(callSid);
   }
+}
+
+// Prepend a next step from AI extraction without duplicating an existing one.
+function dedupePrepend(list, item) {
+  const arr = Array.isArray(list) ? list : [];
+  if (arr.some((x) => String(x).trim().toLowerCase() === item.trim().toLowerCase())) return arr;
+  return [item, ...arr];
 }
