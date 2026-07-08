@@ -73,9 +73,19 @@ See `docs/backups.md` for the full procedure and off-box sync.
 ## Rotating an agent / roles
 
 Edit `AGENT_DIRECTORY` (add/remove the email, set `role` to
-`viewer`/`agent`/`admin`) and redeploy. Removing an email blocks future logins;
-existing sessions expire within `SESSION_TTL_SEC`. Actions are attributable in
-the audit log.
+`viewer`/`agent`/`admin`) and redeploy. The allowlist and role are re-checked on
+**every request**, so a removed email or changed role takes effect the instant
+the new config is live — existing sessions do not linger to `SESSION_TTL_SEC`.
+Actions are attributable in the audit log.
+
+## Offboarding / compromised session (log out everywhere)
+
+To kill every active session for an agent immediately — before a redeploy, or
+for a suspected compromise — open the **Admin Console → Session control**, enter
+the agent's identity, and click **Log out everywhere** (or
+`POST /api/admin/revoke-sessions {identity}`). This is honored across restarts
+(persisted in `session_revocations`). For a permanent block, also remove them
+from `AGENT_DIRECTORY`. A normal logout revokes just that one session.
 
 ## Data subject / deletion request
 

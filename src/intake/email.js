@@ -33,7 +33,7 @@ export function stripHtml(html) {
 
 /** Find a US phone number anywhere in the text and return it in E.164. */
 export function extractPhone(text) {
-  const m = String(text || "").match(/\+?1?[\s.\-]?\(?(\d{3})\)?[\s.\-]?(\d{3})[\s.\-]?(\d{4})/);
+  const m = String(text || "").match(/\+?1?[\s.-]?\(?(\d{3})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})/);
   if (!m) return null;
   const e164 = normalizePhone(`${m[1]}${m[2]}${m[3]}`);
   return e164 || null;

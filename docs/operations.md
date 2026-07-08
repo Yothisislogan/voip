@@ -42,6 +42,22 @@ Cloudflare/Caddy set `RATE_LIMIT_TRUST_PROXY=true` (default) so the real client
 IP is read from `X-Forwarded-For`. Move to a shared store (Redis) if you scale
 horizontally.
 
+## Sessions & revocation
+
+Sessions are stateless signed JWTs (httpOnly + SameSite=Lax, Secure on https).
+Two things keep them from outliving their welcome:
+
+- **Live allowlist re-check** — every request re-validates the session's email
+  against `AGENT_DIRECTORY` and sources the role from it, so removing or
+  re-roling an agent takes effect immediately (not at token expiry).
+- **Revocation registry** (`session_revocations`) — logout revokes that one
+  token (`jti`); admins can revoke *all* of an agent's sessions at once
+  (`POST /api/admin/revoke-sessions`, or the Admin Console). Checks are
+  in-memory (zero-latency) and reloaded from Postgres on restart.
+
+Shorten `SESSION_TTL_SEC` (default 8h) to tighten the worst-case window for the
+DB-less fallback path.
+
 ## CSRF
 
 Cookie-authenticated browser state changes (CRM `PATCH`, `/messaging/send`) use

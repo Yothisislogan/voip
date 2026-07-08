@@ -170,7 +170,8 @@ export const config = {
     csp:
       process.env.CONTENT_SECURITY_POLICY ||
       "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; " +
+        "form-action 'self'; object-src 'none'",
     hstsMaxAge: Number(process.env.HSTS_MAX_AGE) || 15552000, // 180 days
     rateLimit: {
       // Requests per window per client IP. Auth endpoints are stricter.

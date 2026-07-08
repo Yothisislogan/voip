@@ -5,6 +5,7 @@ import { googleConfigured, authUrl, exchangeCodeForProfile } from "../auth/googl
 import { findAgentByEmail } from "../auth/agents.js";
 import { twoFactorEnforced, startVerification, checkVerification } from "../auth/twofactor.js";
 import { normalizeRole } from "../auth/middleware.js";
+import { revokeJti } from "../auth/revocation.js";
 import { audit } from "../audit.js";
 import {
   signToken,
@@ -148,6 +149,9 @@ authRouter.post("/2fa/resend", async (req, res) => {
 
 // ── Logout ──
 authRouter.post("/logout", (req, res) => {
+  // Revoke this exact session server-side so the cookie can't be replayed.
+  const s = verifyToken(readCookie(req, cookieName));
+  if (s?.jti) revokeJti(s.jti, s.exp).catch(() => {});
   res.setHeader("Set-Cookie", clearCookieHeader(cookieName));
   res.redirect("/login");
 });

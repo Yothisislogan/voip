@@ -20,6 +20,7 @@ import { crmRouter } from "./routes/crm.js";
 import { adminRouter } from "./routes/admin.js";
 import { pageGate, roleAtLeast } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
+import { loadRevocations } from "./auth/revocation.js";
 import { securityHeaders } from "./middleware/security.js";
 import { ensureCsrfCookie } from "./middleware/csrf.js";
 import { authLimiter, apiLimiter, webhookLimiter } from "./middleware/rateLimit.js";
@@ -47,8 +48,10 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.urlencoded({ extended: false })); // Twilio posts form-encoded
-app.use(express.json());
+// Body parsers with explicit size caps — an unbounded body is a cheap DoS.
+// Twilio/webhook posts and our JSON APIs are all well under 100kb.
+app.use(express.urlencoded({ extended: false, limit: "100kb" })); // Twilio posts form-encoded
+app.use(express.json({ limit: "100kb" }));
 
 // Plant the double-submit CSRF cookie so browser pages can echo it back.
 app.use(ensureCsrfCookie);
@@ -141,12 +144,14 @@ app.use(messagingWebhookRouter);
 
 // Uniform JSON 404 + a final error handler that never leaks stack traces.
 app.use((_req, res) => res.status(404).json({ error: "not found" }));
-// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
   const status = err.status || err.statusCode || 500;
   if (status >= 500) log.error("unhandled.error", { err: err.message, reqId: req.reqId, path: req.path });
   res.status(status).json({ error: status >= 500 ? "internal error" : err.message || "bad request" });
 });
+
+// Load persisted session revocations so a restart honors prior logouts/offboards.
+loadRevocations().catch(() => {});
 
 // Single HTTP server shared by Express and the agent WebSocket channel.
 const server = http.createServer(app);

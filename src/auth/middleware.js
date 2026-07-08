@@ -1,5 +1,7 @@
 import { config } from "../config.js";
 import { readSession, readSessionFromCookieString } from "./session.js";
+import { findAgentByEmail } from "./agents.js";
+import { isRevoked } from "./revocation.js";
 
 /**
  * Auth gates. When AUTH_REQUIRED=false (local dev only) every gate injects a
@@ -25,6 +27,26 @@ function devAgent() {
 
 function agentFromSession(payload) {
   if (!payload || payload.level !== "full") return null;
+
+  // Revoked (logout / offboarding / compromise) → session is dead immediately.
+  if (isRevoked(payload)) return null;
+
+  // Re-check the live allowlist on EVERY request so removing an email from
+  // AGENT_DIRECTORY (or changing a role) takes effect instantly, instead of
+  // trusting stale claims baked into the JWT until it expires. Only enforced
+  // when a directory is actually configured (production requires one — an empty
+  // directory is a fatal misconfig there); dev/test without one trust the token.
+  if ((config.auth.agents || []).length) {
+    const current = findAgentByEmail(payload.email);
+    if (!current) return null; // agent was removed from the directory
+    return {
+      identity: current.identity,
+      email: current.email,
+      name: payload.name,
+      role: normalizeRole(current.role), // current role wins over the token's
+    };
+  }
+
   return {
     identity: payload.identity,
     email: payload.email,

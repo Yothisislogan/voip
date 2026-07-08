@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 
 // Minimal cookie parse/serialize — no external dependency.
@@ -101,7 +102,9 @@ const PENDING_TTL = 10 * 60; // 10 minutes to complete 2FA
 /** Issue a session token. level: "pending-2fa" | "full". */
 export function issueSession({ email, identity, name, level, role }) {
   const ttl = level === "full" ? config.auth.sessionTtlSec : PENDING_TTL;
-  const token = signToken({ email, identity, name, level, role, typ: "session" }, ttl);
+  // jti = unique token id so a single session can be revoked on logout; iat
+  // (added by jwt) lets us revoke *all* of an identity's sessions at once.
+  const token = signToken({ email, identity, name, level, role, jti: randomUUID(), typ: "session" }, ttl);
   return { token, ttl };
 }
 

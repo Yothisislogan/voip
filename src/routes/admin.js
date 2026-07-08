@@ -7,6 +7,7 @@ import { requireAuth, requireRole } from "../auth/middleware.js";
 import { csrfProtect } from "../middleware/csrf.js";
 import { audit, listAudit } from "../audit.js";
 import { queueStats, listFailedJobs, resolveJob } from "../jobs/deadletter.js";
+import { revokeIdentity } from "../auth/revocation.js";
 
 /**
  * Admin console API — system status, the dead-letter queue, and the audit log.
@@ -79,6 +80,17 @@ adminRouter.post("/api/admin/failed-jobs/:id/resolve", async (req, res) => {
   await resolveJob(id);
   audit({ req, action: "job.resolve", entityType: "failed_job", entityId: id });
   res.json({ ok: true });
+});
+
+// ── Session revocation (log an agent out everywhere) ──
+// Offboarding / compromise response: kills every session issued to an identity
+// so far. Combine with removing them from AGENT_DIRECTORY for a permanent block.
+adminRouter.post("/api/admin/revoke-sessions", async (req, res) => {
+  const identity = String(req.body?.identity || "").trim();
+  if (!identity) return res.status(400).json({ error: "identity is required" });
+  await revokeIdentity(identity, req.agent?.identity);
+  audit({ req, action: "sessions.revoke", entityType: "identity", entityId: identity });
+  res.json({ ok: true, identity });
 });
 
 // ── Audit log ──

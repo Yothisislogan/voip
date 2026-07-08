@@ -60,6 +60,14 @@
     </div>
     <div class="scroll"><table id="jobs"><tbody><tr><td class="empty">Loading…</td></tr></tbody></table></div>
 
+    <h2>Session control</h2>
+    <div class="toolbar">
+      <input id="revokeIdentity" placeholder="agent identity (e.g. marisol.vega)" />
+      <button class="btn sm" id="revokeBtn" style="background:var(--red)">Log out everywhere</button>
+      <span id="revokeMsg" style="font-size:12px"></span>
+    </div>
+    <div class="hint" style="font-size:12px;color:var(--mute);margin:-4px 0 8px">Kills every active session for that identity now. For a permanent block, also remove them from AGENT_DIRECTORY.</div>
+
     <h2>Audit log</h2>
     <div class="toolbar">
       <input id="aActor" placeholder="actor (identity)" />
@@ -167,10 +175,23 @@ async function loadAudit(){
 
 async function whoami(){try{const me=await(await fetch("/auth/me",{credentials:"same-origin"})).json();document.getElementById("who").textContent=(me.name||me.identity||"")+(me.role?` · ${me.role}`:"")}catch{}}
 
+async function revokeSessions(){
+  const identity=document.getElementById("revokeIdentity").value.trim();
+  const msg=document.getElementById("revokeMsg");
+  if(!identity){msg.style.color="#E5484D";msg.textContent="Enter an identity";return}
+  if(!confirm(`Log out every active session for "${identity}"?`))return;
+  try{
+    const r=await api("/api/admin/revoke-sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identity})});
+    if(r.ok){msg.style.color="#1FA85A";msg.textContent="✓ Sessions revoked";document.getElementById("revokeIdentity").value="";loadAudit()}
+    else{msg.style.color="#E5484D";msg.textContent=`Failed (${r.status})`}
+  }catch(e){msg.style.color="#E5484D";msg.textContent=e.message}
+}
+
 document.getElementById("refresh").onclick=e=>{e.preventDefault();loadStatus();loadJobs();loadAudit()};
 document.getElementById("jobReload").onclick=loadJobs;
 document.getElementById("jobStatus").onchange=loadJobs;
 document.getElementById("aReload").onclick=loadAudit;
+document.getElementById("revokeBtn").onclick=revokeSessions;
 whoami();loadStatus();loadJobs();loadAudit();
 </script>
 </body>

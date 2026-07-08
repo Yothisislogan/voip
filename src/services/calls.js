@@ -48,7 +48,7 @@ export async function updateCallStatus({ callSid, status, durationSec }) {
 
 // Persist a completed recording's URL onto the call row. The consent/recording
 // state transition is tracked separately (store/consent.js via the webhook).
-export async function recordRecording({ callSid, recordingSid, url, durationSec }) {
+export async function recordRecording({ callSid, url, durationSec }) {
   if (!db.enabled || !callSid || !url) return;
   try {
     await db.query(
