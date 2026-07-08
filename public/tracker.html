@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WIT Case Tracker</title>
+<style>
+  :root{--blue:#00AEEF;--deep:#007EAE;--purple:#7C3AED;--ink:#17181C;--mute:#6B7280;--line:#DDE7EE;--paper:#F6FBFE;--green:#1FA85A;--amber:#F5A623;--red:#E5484D}
+  *{box-sizing:border-box;font-family:Inter,-apple-system,system-ui,sans-serif}
+  body{margin:0;min-height:100vh;background:radial-gradient(circle at top left,#E4F8FF,#fff 42%,#F7F8FA);color:var(--ink)}
+  .wrap{max-width:920px;margin:0 auto;padding:34px 18px 56px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:24px;box-shadow:0 18px 55px rgba(0,58,85,.12);overflow:hidden}
+  .hero{padding:26px 28px;background:linear-gradient(135deg,var(--deep),var(--blue));color:#fff;position:relative}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:900;letter-spacing:.02em}
+  .logo{width:40px;height:40px;border-radius:12px;background:#fff;color:var(--deep);display:grid;place-items:center;font-weight:1000}
+  .hero h1{font-size:34px;line-height:1.05;margin:26px 0 6px;letter-spacing:-.03em}
+  .hero p{margin:0;color:rgba(255,255,255,.88);font-size:15px}
+  .body{padding:26px 28px 30px}
+  .status-row{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:24px}
+  .eyebrow{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin-bottom:6px}
+  .status{font-size:28px;font-weight:1000;letter-spacing:-.03em}
+  .updated{font-size:13px;color:var(--mute);white-space:nowrap;margin-top:8px}
+  .tracker{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--line);border-radius:18px;overflow:hidden;background:#EAF7FC;margin:18px 0 22px}
+  .step{min-height:92px;padding:14px 10px;border-right:1px solid rgba(0,126,174,.2);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative;color:#006789;background:#EAF7FC}
+  .step:last-child{border-right:0}
+  .num{width:30px;height:30px;border-radius:99px;display:grid;place-items:center;background:#fff;border:1px solid rgba(0,126,174,.25);font-weight:1000;margin-bottom:7px}
+  .label{font-size:11px;line-height:1.2;font-weight:900;text-transform:uppercase;letter-spacing:.03em}
+  .step.done{background:#DFF7E9;color:#136B37}.step.done .num{background:var(--green);color:#fff;border-color:var(--green)}
+  .step.current{background:linear-gradient(135deg,#F6335B,#DD1F48);color:#fff;transform:scale(1.04);z-index:2;box-shadow:0 10px 24px rgba(221,31,72,.28)}
+  .step.current .num{background:#fff;color:#DD1F48;border-color:#fff}
+  .note{border:1px solid var(--line);border-radius:16px;background:var(--paper);padding:18px 18px;font-size:16px;line-height:1.5}
+  .footer{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:22px;color:var(--mute);font-size:13px}
+  .btn{display:inline-flex;align-items:center;justify-content:center;border-radius:12px;padding:11px 15px;background:var(--blue);color:#fff;text-decoration:none;font-weight:900}
+  .error{padding:40px 28px;text-align:center}.error h1{margin:0 0 8px;font-size:28px}.error p{color:var(--mute)}
+  @media(max-width:760px){.hero h1{font-size:28px}.status-row{display:block}.updated{white-space:normal}.tracker{display:block}.step{min-height:70px;border-right:0;border-bottom:1px solid rgba(0,126,174,.2);flex-direction:row;gap:12px;justify-content:flex-start;text-align:left}.step.current{transform:none}.footer{display:block}.btn{margin-top:14px;width:100%}}
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card" id="app">
+      <div class="error"><h1>Loading tracker…</h1><p>Please hold on while we check your status.</p></div>
+    </section>
+  </main>
+<script>
+const esc=s=>String(s==null?"":s).replace(/[&<>\"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+function tokenFromPath(){const parts=location.pathname.split("/").filter(Boolean);return parts[0]==="t"?parts[1]:new URLSearchParams(location.search).get("token")}
+function fmt(d){if(!d)return "";try{return new Date(d).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}catch{return String(d)}}
+function noteFor(status){return ({
+  request_received:"We received your request and the WIT team is getting it moving.",
+  need_more_information:"We need a little more information before we can move this forward.",
+  submitted:"Your information has been submitted for review.",
+  waiting_underwriting:"Your request is with underwriting. We will update this page when we hear back.",
+  quote_delivered:"Your quote has been delivered. Please review it and contact us with questions.",
+  ready_to_bind:"Your quote is ready to bind. Contact your agent when you are ready to move forward.",
+  complete:"Your case is complete.",
+  paused:"This case is paused. Contact us if you have questions.",
+  closed:"This case is closed.",
+  declined:"This case was declined or could not be completed as submitted.",
+  cancelled:"This case was cancelled."
+})[status]||"We are working on your request."}
+async function load(){
+  const token=tokenFromPath();
+  if(!token){return renderError("Tracker link missing", "This link is incomplete. Please ask your WIT agent for a new link.")}
+  const r=await fetch(`/api/public/tracker/${encodeURIComponent(token)}`,{credentials:"omit"});
+  if(!r.ok){return renderError("Tracker unavailable", "This link may be expired, revoked, or incorrect. Please contact your WIT agent.")}
+  render(await r.json());
+}
+function render(t){
+  const steps=(t.steps||[]).map((s,i)=>`<div class="step ${s.current?"current":s.complete?"done":""}"><div class="num">${s.complete&&!s.current?"✓":i+1}</div><div class="label">${esc(s.label)}</div></div>`).join("");
+  const note=t.public_note||noteFor(t.status);
+  document.getElementById("app").innerHTML=`
+    <div class="hero">
+      <div class="brand"><div class="logo">W</div><div>We Insure Things</div></div>
+      <h1>${esc(t.title||"Your insurance request")}</h1>
+      <p>A simple status page from your WIT team.</p>
+    </div>
+    <div class="body">
+      <div class="status-row">
+        <div><div class="eyebrow">Current status</div><div class="status">${esc(t.status_label||"")}</div></div>
+        <div class="updated">Last updated ${esc(fmt(t.last_updated))}</div>
+      </div>
+      <div class="tracker">${steps}</div>
+      <div class="note">${esc(note)}</div>
+      <div class="footer">
+        <span>This page only shows your case status. It does not show private application details.</span>
+        <a class="btn" href="tel:+17028991909">Contact WIT</a>
+      </div>
+    </div>`;
+}
+function renderError(title,msg){document.getElementById("app").innerHTML=`<div class="error"><h1>${esc(title)}</h1><p>${esc(msg)}</p><a class="btn" href="tel:+17028991909">Contact WIT</a></div>`}
+load().catch(()=>renderError("Tracker unavailable","Please try again or contact your WIT agent."));
+</script>
+</body>
+</html>
