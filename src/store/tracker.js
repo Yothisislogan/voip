@@ -52,17 +52,36 @@ function normalizeStatus(status) {
   return TRACKER_STATUSES.includes(s) ? s : "request_received";
 }
 
-function hashToken(token) {
-  return crypto.createHash("sha256").update(String(token)).digest("hex");
+function trackerSecret() {
+  // Production validation already requires SESSION_SECRET when auth is on. Use a
+  // dev fallback only so local unauthenticated smoke tests can still render links.
+  return config.auth?.sessionSecret || process.env.TRACKER_LINK_SECRET || "wit-connect-dev-tracker-secret";
 }
 
-function makeToken() {
-  return crypto.randomBytes(24).toString("base64url");
+function signTrackerId(id) {
+  const payload = Buffer.from(String(id)).toString("base64url");
+  const sig = crypto.createHmac("sha256", trackerSecret()).update(payload).digest("base64url").slice(0, 32);
+  return `${payload}.${sig}`;
 }
 
-function trackerUrl(token) {
+function verifyTrackerToken(token) {
+  const [payload, sig] = String(token || "").split(".");
+  if (!payload || !sig) return null;
+  const expected = crypto.createHmac("sha256", trackerSecret()).update(payload).digest("base64url").slice(0, 32);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const id = Number(Buffer.from(payload, "base64url").toString("utf8"));
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function randomNonceHash() {
+  return crypto.createHash("sha256").update(crypto.randomBytes(32)).digest("hex");
+}
+
+function trackerUrlForId(id) {
   const base = (config.publicBaseUrl || "").replace(/\/$/, "");
-  return `${base || ""}/t/${encodeURIComponent(token)}`;
+  return `${base || ""}/t/${encodeURIComponent(signTrackerId(id))}`;
 }
 
 function statusLabel(status) {
@@ -78,6 +97,16 @@ function publicSteps(status) {
     complete: idx < safeIdx || status === "complete",
     current: idx === safeIdx && status !== "complete",
   }));
+}
+
+function shapeTracker(row, events = []) {
+  if (!row) return null;
+  return {
+    ...row,
+    status_label: statusLabel(row.status),
+    url: trackerUrlForId(row.id),
+    events,
+  };
 }
 
 async function recordEvent(trackerId, { status, publicNote, actorIdentity, eventType = "status_update" } = {}) {
@@ -116,7 +145,7 @@ export async function getTrackerForContact(contactId) {
         [tracker.id]
       )
     ).rows;
-    return { ...tracker, status_label: statusLabel(tracker.status), events };
+    return shapeTracker(tracker, events);
   } catch (err) {
     console.error("getTrackerForContact failed:", err.message);
     return null;
@@ -125,8 +154,6 @@ export async function getTrackerForContact(contactId) {
 
 export async function createTrackerForContact(contactId, { publicTitle, status, publicNote, actorIdentity, expiresAt } = {}) {
   if (!db.enabled || !contactId) return null;
-  const token = makeToken();
-  const tokenHash = hashToken(token);
   const safeStatus = normalizeStatus(status);
   const title = cleanText(publicTitle, 160) || "Your insurance request";
   const note = cleanText(publicNote);
@@ -137,12 +164,12 @@ export async function createTrackerForContact(contactId, { publicTitle, status, 
          (contact_id, token_hash, public_title, status, public_note, expires_at, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        RETURNING *`,
-      [contactId, tokenHash, title, safeStatus, note, expiresAt || null, actorIdentity || null]
+      [contactId, randomNonceHash(), title, safeStatus, note, expiresAt || null, actorIdentity || null]
     );
-    const tracker = r.rows[0] || null;
-    if (!tracker) return null;
-    await recordEvent(tracker.id, { status: safeStatus, publicNote: note, actorIdentity, eventType: "created" });
-    return { ...tracker, status_label: statusLabel(tracker.status), token, url: trackerUrl(token), events: [] };
+    const row = r.rows[0] || null;
+    if (!row) return null;
+    await recordEvent(row.id, { status: safeStatus, publicNote: note, actorIdentity, eventType: "created" });
+    return shapeTracker(row, []);
   } catch (err) {
     console.error("createTrackerForContact failed:", err.message);
     return null;
@@ -174,15 +201,15 @@ export async function updateTracker(trackerId, fields = {}, actorIdentity) {
       `UPDATE case_tracker_links SET ${updates.join(", ")} WHERE id = $1 RETURNING *`,
       params
     );
-    const tracker = r.rows[0] || null;
-    if (!tracker) return null;
-    await recordEvent(tracker.id, {
-      status: tracker.status,
-      publicNote: tracker.public_note,
+    const row = r.rows[0] || null;
+    if (!row) return null;
+    await recordEvent(row.id, {
+      status: row.status,
+      publicNote: row.public_note,
       actorIdentity,
       eventType: fields.is_active === false ? "revoked" : "status_update",
     });
-    return { ...tracker, status_label: statusLabel(tracker.status) };
+    return shapeTracker(row);
   } catch (err) {
     console.error("updateTracker failed:", err.message);
     return null;
@@ -196,16 +223,17 @@ export async function revokeTracker(trackerId, actorIdentity) {
 export async function getPublicTracker(token) {
   if (!db.enabled || !token) return null;
   try {
-    const tokenHash = hashToken(token);
+    const trackerId = verifyTrackerToken(token);
+    if (!trackerId) return null;
     const tracker = (
       await db.query(
         `SELECT id, public_title, status, public_note, is_active, expires_at, updated_at, created_at
            FROM case_tracker_links
-          WHERE token_hash = $1
+          WHERE id = $1
             AND is_active = true
             AND (expires_at IS NULL OR expires_at > now())
           LIMIT 1`,
-        [tokenHash]
+        [trackerId]
       )
     ).rows[0] || null;
     if (!tracker) return null;
