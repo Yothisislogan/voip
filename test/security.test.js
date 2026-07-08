@@ -86,6 +86,24 @@ test("rateLimit allows up to max then 429s", () => {
   assert.deepEqual(outcomes, ["ok", "ok", 429]);
 });
 
+test("rateLimit is not bypassed by rotating a forged X-Forwarded-For prefix", () => {
+  const mw = rateLimit("xff-spoof-bucket", 2);
+  let blocked = 0;
+  for (let i = 0; i < 5; i++) {
+    // Attacker varies the (client-forgeable) first XFF entry; the proxy appends
+    // the REAL connection IP last. Bucketing must key on the trusted entry.
+    const req = {
+      headers: { "x-forwarded-for": `10.9.9.${i}, 203.0.113.7` },
+      socket: { remoteAddress: "127.0.0.1" },
+    };
+    const r = res();
+    let ok = false;
+    mw(req, r, () => (ok = true));
+    if (!ok && r.code === 429) blocked++;
+  }
+  assert.equal(blocked, 3); // first 2 pass, remaining 3 blocked despite rotation
+});
+
 test("rateLimit isolates buckets per client IP", () => {
   const mw = rateLimit("unit-test-bucket-2", 1);
   const mk = (ip) => ({ headers: {}, socket: { remoteAddress: ip } });

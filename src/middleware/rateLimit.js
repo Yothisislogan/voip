@@ -8,12 +8,24 @@ import { config } from "../config.js";
  * memory stays bounded.
  */
 
-const { windowMs, trustProxy } = config.security.rateLimit;
+const { windowMs, trustProxy, trustHops } = config.security.rateLimit;
 
+/**
+ * Client IP for bucketing. SECURITY: X-Forwarded-For is client-forgeable except
+ * for the entries appended by our own proxies — a client can send a fake XFF
+ * header and the proxy appends the REAL connection IP after it. So we count
+ * `trustHops` entries from the RIGHT (1 = directly behind Caddy/Render,
+ * 2 = Cloudflare in front of Caddy), never the attacker-controlled first entry.
+ * Taking the first entry would let an attacker rotate fake IPs and bypass the
+ * auth/OTP brute-force limits entirely.
+ */
 function clientIp(req) {
   if (trustProxy) {
     const xff = req.headers["x-forwarded-for"];
-    if (xff) return String(xff).split(",")[0].trim();
+    if (xff) {
+      const chain = String(xff).split(",").map((s) => s.trim()).filter(Boolean);
+      if (chain.length) return chain[Math.max(0, chain.length - trustHops)];
+    }
   }
   return req.socket?.remoteAddress || req.ip || "unknown";
 }

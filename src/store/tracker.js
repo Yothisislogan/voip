@@ -52,19 +52,39 @@ function normalizeStatus(status) {
   return TRACKER_STATUSES.includes(s) ? s : "request_received";
 }
 
-function trackerSecret() {
-  // Production validation already requires SESSION_SECRET when auth is on. Use a
-  // dev fallback only so local unauthenticated smoke tests can still render links.
-  return config.auth?.sessionSecret || process.env.TRACKER_LINK_SECRET || "wit-connect-dev-tracker-secret";
+// User-supplied expiry → ISO timestamp or null. Invalid dates become null
+// (no expiry) instead of bubbling a Postgres cast error up as a 500.
+function cleanTimestamp(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-function signTrackerId(id) {
+let warnedDevSecret = false;
+function trackerSecret() {
+  // Prefer a dedicated secret; otherwise DERIVE a purpose-specific key from
+  // SESSION_SECRET (never use it raw — the session-JWT key and the link-signing
+  // key must not be interchangeable). Production validation already requires
+  // SESSION_SECRET, so the hardcoded value only ever signs local dev links —
+  // warn loudly so it is never mistaken for a real secret.
+  if (process.env.TRACKER_LINK_SECRET) return process.env.TRACKER_LINK_SECRET;
+  if (config.auth?.sessionSecret) {
+    return crypto.createHmac("sha256", config.auth.sessionSecret).update("wit-tracker-link-v1").digest();
+  }
+  if (!warnedDevSecret) {
+    warnedDevSecret = true;
+    console.warn("⚠️  Tracker links are signed with the DEV fallback secret — anyone can forge them. Set SESSION_SECRET (or TRACKER_LINK_SECRET).");
+  }
+  return "wit-connect-dev-tracker-secret";
+}
+
+export function signTrackerId(id) {
   const payload = Buffer.from(String(id)).toString("base64url");
   const sig = crypto.createHmac("sha256", trackerSecret()).update(payload).digest("base64url").slice(0, 32);
   return `${payload}.${sig}`;
 }
 
-function verifyTrackerToken(token) {
+export function verifyTrackerToken(token) {
   const [payload, sig] = String(token || "").split(".");
   if (!payload || !sig) return null;
   const expected = crypto.createHmac("sha256", trackerSecret()).update(payload).digest("base64url").slice(0, 32);
@@ -164,7 +184,7 @@ export async function createTrackerForContact(contactId, { publicTitle, status, 
          (contact_id, token_hash, public_title, status, public_note, expires_at, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        RETURNING *`,
-      [contactId, randomNonceHash(), title, safeStatus, note, expiresAt || null, actorIdentity || null]
+      [contactId, randomNonceHash(), title, safeStatus, note, cleanTimestamp(expiresAt), actorIdentity || null]
     );
     const row = r.rows[0] || null;
     if (!row) return null;
@@ -191,7 +211,7 @@ export async function updateTracker(trackerId, fields = {}, actorIdentity) {
   if (fields.public_note !== undefined) set("public_note", cleanText(fields.public_note));
   if (fields.show_agent_name !== undefined) set("show_agent_name", Boolean(fields.show_agent_name));
   if (fields.is_active !== undefined) set("is_active", Boolean(fields.is_active));
-  if (fields.expires_at !== undefined) set("expires_at", fields.expires_at || null);
+  if (fields.expires_at !== undefined) set("expires_at", cleanTimestamp(fields.expires_at));
 
   if (!updates.length) return null;
   updates.push("updated_at = now()");

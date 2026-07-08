@@ -179,6 +179,10 @@ export const config = {
       authMax: Number(process.env.RATE_LIMIT_AUTH_MAX) || 20,
       webhookMax: Number(process.env.RATE_LIMIT_WEBHOOK_MAX) || 600,
       trustProxy: process.env.RATE_LIMIT_TRUST_PROXY !== "false", // read X-Forwarded-For (behind Caddy/CF)
+      // How many proxies WE control append to X-Forwarded-For. 1 = Caddy/Render
+      // alone; 2 = Cloudflare in front of Caddy. Entries left of these are
+      // client-forgeable and must never be trusted.
+      trustHops: Math.max(1, Number(process.env.RATE_LIMIT_TRUST_HOPS) || 1),
     },
   },
 

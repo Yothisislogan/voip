@@ -61,7 +61,12 @@ export async function listAudit({ limit = 100, actor, action, entityId } = {}) {
 }
 
 function clientIp(req) {
+  // Last XFF entry = appended by our own proxy (unforgeable by the client);
+  // the first entry is attacker-controlled and must not be recorded as fact.
   const xff = req.headers?.["x-forwarded-for"];
-  if (xff) return String(xff).split(",")[0].trim();
+  if (xff) {
+    const chain = String(xff).split(",").map((s) => s.trim()).filter(Boolean);
+    if (chain.length) return chain[chain.length - 1];
+  }
   return req.socket?.remoteAddress || req.ip || null;
 }

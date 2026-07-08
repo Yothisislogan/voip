@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../auth/middleware.js";
 import { csrfProtect } from "../middleware/csrf.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 import { audit, listAudit } from "../audit.js";
 import { getConsentForCall } from "../store/consent.js";
 import * as crm from "../store/crm.js";
@@ -16,7 +17,10 @@ export const crmRouter = Router();
 // ── public case tracker ─────────────────────────────────────────────
 // Customer-facing smart links are token-only and return a deliberately tiny,
 // safe payload: no internal notes, transcript, call data, contact id, or PII.
-crmRouter.get("/api/public/tracker/:token", async (req, res) => {
+// Unauthenticated surface → its own tight rate bucket + never cached (a shared
+// proxy must not serve one customer's status to another request).
+crmRouter.get("/api/public/tracker/:token", rateLimit("public-tracker", 60), async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   if (!crm.crmDbEnabled) return res.status(503).json({ error: "tracker database not configured" });
   const payload = await tracker.getPublicTracker(req.params.token);
   if (!payload) return res.status(404).json({ error: "tracker not found" });
@@ -93,9 +97,14 @@ crmRouter.post("/api/crm/contacts/:id/tracker", requireRole("agent"), async (req
   res.status(201).json({ tracker: created, statusOptions: tracker.trackerStatusOptions() });
 });
 
+const TRACKER_PATCH_FIELDS = ["public_title", "status", "public_note", "show_agent_name", "is_active", "expires_at"];
 crmRouter.patch("/api/crm/trackers/:id", requireRole("agent"), async (req, res) => {
-  const updated = await tracker.updateTracker(req.params.id, req.body || {}, req.agent?.identity);
-  if (!updated) return res.status(404).json({ error: "tracker not found or unchanged" });
+  const body = req.body || {};
+  if (!TRACKER_PATCH_FIELDS.some((f) => body[f] !== undefined)) {
+    return res.status(400).json({ error: `no updatable fields (${TRACKER_PATCH_FIELDS.join(", ")})` });
+  }
+  const updated = await tracker.updateTracker(req.params.id, body, req.agent?.identity);
+  if (!updated) return res.status(404).json({ error: "tracker not found" });
   audit({
     req,
     action: "tracker.update",

@@ -114,19 +114,39 @@ const twilioWebhook = (() => {
   });
 })();
 
-// Authenticated app API — general per-IP rate limit.
-app.use(apiLimiter, tokenRouter);
-app.use(apiLimiter, aiRouter);
-app.use(apiLimiter, crmRouter); // authenticated CRM API + public tracker API
-app.use(apiLimiter, adminRouter); // admin console API (status, DLQ, audit — admin-only inside)
-app.use(apiLimiter, messagingRouter); // agent send + conversation list (requireAuth + CSRF inside)
+// Rate limits are PATH-SCOPED so each request is counted exactly once in one
+// bucket. (Mounting a limiter as `app.use(limiter, router)` runs it for every
+// request that falls through that layer — API calls would be multi-counted and
+// unmatched paths would drain the buckets.)
+app.use(["/token", "/ai", "/api", "/messaging/send", "/messaging/conversations"], apiLimiter);
+app.use(["/voice", "/recording", "/messaging/inbound", "/email"], webhookLimiter);
 
-// Webhooks — separate, looser budget (providers can burst). Twilio routes are
-// additionally signature-validated; email intake uses an optional shared token.
-app.use(webhookLimiter, emailRouter); // inbound email intake webhook (optional token)
-app.use(webhookLimiter, twilioWebhook, voiceRouter);
-app.use(webhookLimiter, twilioWebhook, recordingRouter);
-app.use(webhookLimiter, twilioWebhook, messagingWebhookRouter); // provider inbound webhook (signed)
+// Twilio signature validation, scoped to exactly the Twilio webhook paths —
+// unmatched routes must fall through to the 404 handler, not a signature error.
+app.use(["/voice", "/recording", "/messaging/inbound"], twilioWebhook);
+
+// Authenticated app API.
+app.use(tokenRouter);
+app.use(aiRouter);
+app.use(crmRouter); // authenticated CRM API + public tracker API
+app.use(adminRouter); // admin console API (status, DLQ, audit — admin-only inside)
+app.use(messagingRouter); // agent send + conversation list (requireAuth + CSRF inside)
+
+// Webhooks. Twilio routes are signature-validated above; email intake uses an
+// optional shared token.
+app.use(emailRouter);
+app.use(voiceRouter);
+app.use(recordingRouter);
+app.use(messagingWebhookRouter);
+
+// Uniform JSON 404 + a final error handler that never leaks stack traces.
+app.use((_req, res) => res.status(404).json({ error: "not found" }));
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) log.error("unhandled.error", { err: err.message, reqId: req.reqId, path: req.path });
+  res.status(status).json({ error: status >= 500 ? "internal error" : err.message || "bad request" });
+});
 
 // Single HTTP server shared by Express and the agent WebSocket channel.
 const server = http.createServer(app);
