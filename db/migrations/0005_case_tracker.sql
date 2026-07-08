@@ -1,6 +1,6 @@
 -- 0005: Customer-facing case tracker smart links.
--- Tokenized public status pages for prospects. Raw tokens are never stored;
--- only SHA-256 hashes are persisted.
+-- Public links are signed from the tracker id at runtime. The database stores a
+-- random nonce hash for uniqueness/audit hygiene, but not a reusable raw token.
 
 CREATE TABLE IF NOT EXISTS case_tracker_links (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
