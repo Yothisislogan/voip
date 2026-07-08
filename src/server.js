@@ -75,6 +75,10 @@ app.use(authRouter);
 app.get("/login", (_req, res) => res.sendFile(path.join(publicDir, "login.html")));
 app.get("/2fa", (_req, res) => res.sendFile(path.join(publicDir, "2fa.html")));
 
+// Public, token-only customer case tracker smart links. The page itself is
+// public; the JSON API returns only safe status fields and never exposes CRM PII.
+app.get("/t/:token", (_req, res) => res.sendFile(path.join(publicDir, "tracker.html")));
+
 // Gate the app pages: an authenticated "full" session is required, otherwise
 // redirect to /login. The login + 2FA pages are served by static, ungated.
 const PROTECTED_PAGES = new Set(["/", "/index.html", "/softphone.html", "/agent.html", "/contacts.html", "/call.html"]);
@@ -113,7 +117,7 @@ const twilioWebhook = (() => {
 // Authenticated app API — general per-IP rate limit.
 app.use(apiLimiter, tokenRouter);
 app.use(apiLimiter, aiRouter);
-app.use(apiLimiter, crmRouter); // authenticated CRM API (requireAuth + CSRF inside)
+app.use(apiLimiter, crmRouter); // authenticated CRM API + public tracker API
 app.use(apiLimiter, adminRouter); // admin console API (status, DLQ, audit — admin-only inside)
 app.use(apiLimiter, messagingRouter); // agent send + conversation list (requireAuth + CSRF inside)
 
