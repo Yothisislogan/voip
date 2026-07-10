@@ -2,6 +2,7 @@ import { config } from "../src/config.js";
 import { log } from "../src/logger.js";
 import { dueJobs, resolveJob, bumpJob } from "../src/jobs/deadletter.js";
 import { handleInbound } from "../src/messaging/orchestrator.js";
+import { sendWitnextEvent } from "../src/integrations/witnext.js";
 
 /**
  * Dead-letter retry runner. Drains due jobs from failed_jobs with exponential
@@ -17,6 +18,13 @@ import { handleInbound } from "../src/messaging/orchestrator.js";
 
 const HANDLERS = {
   handleInbound: (payload) => handleInbound(payload.body),
+  // WiTNext deliveries replay with their ORIGINAL event_id so the receiver
+  // dedupes; timestamp/nonce/signature are regenerated per attempt.
+  witnextEvent: (payload) =>
+    sendWitnextEvent(payload.eventType, payload.payload, {
+      eventId: payload.eventId,
+      occurredAt: payload.occurredAt,
+    }),
   // Session-bound kinds have no replayable handler here (see note above).
 };
 

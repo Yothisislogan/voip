@@ -108,6 +108,8 @@ async function loadStatus(){
     cards.push(card("Messaging", `${statusDot(s.messaging.configured?"ok":"warn")} ${s.messaging.enabled?esc(s.messaging.provider):"Off"}`,
       s.messaging.configured?"Provider configured":"Not fully configured"));
     cards.push(card("ERPNext", `${statusDot(s.erpnext.configured?"ok":"warn")} ${s.erpnext.configured?"Connected":"Not set"}`, "Optional mirror"));
+    if(s.witnext)cards.push(card("WiTNext bridge", `${statusDot(s.witnext.enabled?"ok":s.witnext.halfConfigured?"bad":"warn")} ${s.witnext.enabled?"Forwarding":s.witnext.halfConfigured?"HALF-CONFIGURED":"Off"}`,
+      `${s.witnext.enabled?esc(s.witnext.url||""):"set WITNEXT_URL + secret"}${s.witnext.dialpadWebhook?" · Dialpad webhook on":""}`));
     cards.push(card("Email intake", `${statusDot(s.email.enabled?"ok":"warn")} ${s.email.enabled?"On":"Off"}`, s.email.tokenProtected?"Token-protected":"No token"));
     const groqNeeded=[s.ai.coachingBackend,s.ai.recapBackend,s.ai.automationBackend].includes("groq");
     cards.push(card("AI backends", `${statusDot(groqNeeded&&!s.ai.groqConfigured?"warn":"ok")} ${esc(s.ai.coachingBackend)} / ${esc(s.ai.recapBackend)} / ${esc(s.ai.automationBackend||"rules")}`,

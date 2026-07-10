@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { config } from "../config.js";
 import { parseInboundEmail, handleInboundEmail } from "../intake/email.js";
+import { emitWitnextEvent } from "../integrations/witnext.js";
+import { recordFailedJob } from "../jobs/deadletter.js";
 
 /**
  * POST /email/inbound — inbound-parse webhook (SendGrid / Mailgun). Parses the
@@ -25,6 +27,21 @@ emailRouter.post("/email/inbound", async (req, res) => {
     const parsed = parseInboundEmail(req.body || {});
     if (!parsed.fromEmail && !parsed.body) return res.status(400).json({ error: "empty email" });
     const result = await handleInboundEmail(parsed);
+
+    // Broker: forward the normalized (never raw) lead to WiTNext intake review.
+    // Gmail/message id rides along for receiver-side idempotency.
+    emitWitnextEvent(
+      "email.lead_received",
+      {
+        source: "email",
+        message_id: parsed.messageId || null,
+        from_name: parsed.fromName || null,
+        from_email: parsed.fromEmail || null,
+        subject: parsed.subject || null,
+        extracted: result?.fields || null,
+      },
+      { recordFailedJob }
+    );
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error("email intake failed:", err.message);

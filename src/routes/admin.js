@@ -54,6 +54,12 @@ adminRouter.get("/api/admin/status", async (req, res) => {
       configured: Boolean(config.messaging.conversationsServiceSid),
     },
     erpnext: { configured: Boolean(config.erpnext.baseUrl && config.erpnext.apiKey) },
+    witnext: {
+      enabled: config.witnext.enabled,
+      url: config.witnext.url || null,
+      halfConfigured: Boolean(config.witnext.url) !== Boolean(config.witnext.secret),
+      dialpadWebhook: config.dialpad.enabled,
+    },
     email: { enabled: config.emailIntake.enabled, tokenProtected: Boolean(config.emailIntake.token) },
     ai: {
       coachingBackend: config.llm.coachingBackend,

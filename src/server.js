@@ -16,6 +16,7 @@ import { authRouter } from "./routes/auth.js";
 import { aiRouter } from "./routes/ai.js";
 import { messagingRouter, messagingWebhookRouter } from "./routes/messaging.js";
 import { emailRouter } from "./routes/email.js";
+import { dialpadRouter } from "./routes/dialpad.js";
 import { crmRouter } from "./routes/crm.js";
 import { adminRouter } from "./routes/admin.js";
 import { pageGate, roleAtLeast } from "./auth/middleware.js";
@@ -122,7 +123,11 @@ const twilioWebhook = (() => {
 // request that falls through that layer — API calls would be multi-counted and
 // unmatched paths would drain the buckets.)
 app.use(["/token", "/ai", "/api", "/messaging/send", "/messaging/conversations"], apiLimiter);
-app.use(["/voice", "/recording", "/messaging/inbound", "/email"], webhookLimiter);
+app.use(["/voice", "/recording", "/messaging/inbound", "/email", "/dialpad"], webhookLimiter);
+
+// Dialpad posts its JWT-signed payload as a raw text body; parse it as text on
+// that path only (verified inside the route — never trusted unparsed).
+app.use("/dialpad", express.text({ type: ["text/*", "application/jwt"], limit: "200kb" }));
 
 // Twilio signature validation, scoped to exactly the Twilio webhook paths —
 // unmatched routes must fall through to the 404 handler, not a signature error.
@@ -138,6 +143,7 @@ app.use(messagingRouter); // agent send + conversation list (requireAuth + CSRF 
 // Webhooks. Twilio routes are signature-validated above; email intake uses an
 // optional shared token.
 app.use(emailRouter);
+app.use(dialpadRouter); // Dialpad → WiTNext broker (JWT-verified inside)
 app.use(voiceRouter);
 app.use(recordingRouter);
 app.use(messagingWebhookRouter);

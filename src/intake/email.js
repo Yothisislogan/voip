@@ -77,5 +77,5 @@ export async function handleInboundEmail(parsed) {
     parsed: leadFields,
   });
 
-  return { contactId: contact?.id || null, emailIntakeId, phone };
+  return { contactId: contact?.id || null, emailIntakeId, phone, fields: leadFields };
 }

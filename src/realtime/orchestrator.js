@@ -8,6 +8,8 @@ import { extractLeadFieldsAI, mergeAiExtraction } from "../ai/extract-ai.js";
 import * as crm from "../store/crm.js";
 import * as erpnext from "../crm/erpnext.js";
 import { recordDisclosure } from "../store/consent.js";
+import { witnextEnabled, emitWitnextEvent } from "../integrations/witnext.js";
+import { recordFailedJob } from "../jobs/deadletter.js";
 import { maybeSendSurvey } from "./survey.js";
 import { getSession, setContact, endSession } from "./sessions.js";
 import { publishToAgent } from "./bus.js";
@@ -168,6 +170,33 @@ export async function onCallComplete(callSid, durationSec) {
 
     // Post-call survey SMS (best-effort; no-op if messaging/DB disabled).
     maybeSendSurvey({ callSid, session }).catch(() => {});
+
+    // Forward normalized events to the WiTNext CRM (broker role). Failures
+    // land in the DLQ and retry with the SAME event_id, so WiTNext dedupes.
+    if (witnextEnabled()) {
+      const occurredAt = new Date().toISOString();
+      const callBase = {
+        source: "twilio",
+        call_id: callSid,
+        direction: session.direction,
+        external_number: session.customerNumber,
+        from: session.from,
+        to: session.to,
+        agent_identity: session.identity || null,
+        duration_seconds: durationSec ?? null,
+      };
+      emitWitnextEvent("call.completed", callBase, { occurredAt, recordFailedJob });
+      emitWitnextEvent(
+        "call.recap_available",
+        { ...callBase, recap, score: scored, proposed_updates: proposedUpdates },
+        { occurredAt, recordFailedJob }
+      );
+      emitWitnextEvent(
+        "call.transcript_available",
+        { ...callBase, transcript: full },
+        { occurredAt, recordFailedJob }
+      );
+    }
 
     if (session.identity) {
       publishToAgent(session.identity, "recap", {

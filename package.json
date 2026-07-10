@@ -11,6 +11,7 @@
     "restore-test": "node scripts/restore-verify.js",
     "simulate": "node scripts/simulate.js",
     "simulate:groq": "node scripts/simulate-groq.js",
+    "simulate:witnext": "node scripts/simulate-witnext.js",
     "retry-jobs": "node scripts/retry-jobs.js",
     "purge-retention": "node scripts/purge-retention.js",
     "lint": "eslint src scripts test",

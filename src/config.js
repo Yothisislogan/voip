@@ -121,6 +121,33 @@ export const config = {
   recapEnabled: process.env.RECAP_ENABLED !== "false",
   coachingThrottleMs: Number(process.env.COACHING_THROTTLE_MS) || 6000,
 
+  // ── WiTNext CRM bridge ──
+  // WIT Connect acts as the integration BROKER between the phone layer and the
+  // WiTNext CRM: call/recap/transcript/recording/email events are normalized,
+  // HMAC-signed, and forwarded to WiTNext's integration API. Enabled only when
+  // both the URL and a dedicated secret are set.
+  witnext: {
+    url: (process.env.WITNEXT_URL || "").replace(/\/$/, ""),
+    secret: process.env.WITNEXT_INTEGRATION_SECRET || null,
+    callEventsPath: process.env.WITNEXT_CALL_EVENTS_PATH || "/api/v1/integrations/dialpad/events",
+    emailEventsPath: process.env.WITNEXT_EMAIL_EVENTS_PATH || "/api/v1/integrations/email/events",
+    timeoutMs: Number(process.env.WITNEXT_TIMEOUT_MS) || 8000,
+    get enabled() {
+      return Boolean(this.url && this.secret);
+    },
+  },
+
+  // ── Dialpad inbound webhooks (experimental, flag-gated) ──
+  // Dialpad signs webhook payloads as an HS256 JWT with the subscription's
+  // webhook secret. Events are normalized and forwarded to WiTNext via the
+  // bridge above. Requires the secret — unsigned Dialpad events are rejected.
+  dialpad: {
+    webhookSecret: process.env.DIALPAD_WEBHOOK_SECRET || null,
+    get enabled() {
+      return Boolean(this.webhookSecret);
+    },
+  },
+
   // Post-call survey SMS follow-up (opt-in).
   survey: {
     enabled: process.env.SURVEY_ENABLED === "true",

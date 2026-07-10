@@ -48,6 +48,11 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   }
   if (!config.databaseUrl) warn.push("DATABASE_URL not set — the Postgres CRM/pipeline is disabled.");
 
+  // WiTNext bridge: half-configured = silently disabled — make that visible.
+  if (Boolean(config.witnext.url) !== Boolean(config.witnext.secret)) {
+    warn.push("WiTNext bridge is half-configured (need BOTH WITNEXT_URL and WITNEXT_INTEGRATION_SECRET) — events are NOT being forwarded.");
+  }
+
   // AI backends: a Groq backend selected without a key silently falls back to
   // rules — warn so it isn't mistaken for "Groq is running".
   const backends = [config.llm.coachingBackend, config.llm.recapBackend, config.llm.automationBackend];
