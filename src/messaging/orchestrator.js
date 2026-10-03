@@ -5,6 +5,8 @@ import { findContactByPhone, logChatMessage } from "../crm/erpnext.js";
 import * as crm from "../store/crm.js";
 import { parseSurveyRating } from "../realtime/survey.js";
 import { publishToAgent } from "../realtime/bus.js";
+import { db } from '../db.js';
+import * as messageStore from './store.js';
 
 /**
  * Ties an inbound message provider to the agent's screen + ERPNext, mirroring
@@ -40,9 +42,11 @@ export async function handleInbound(body, now = Date.now()) {
     agentIdentities: agentIdentities(),
   });
   if (!msg) return null;
+  if (!msg.conversationId || !msg.messageSid) throw new Error('ConversationSid and MessageSid required');
 
   // Route to the default agent (MVP — replace with queue/routing later).
   const agentIdentity = config.defaultAgentIdentity;
+  if (db.enabled && !await messageStore.persistInbound(msg, agentIdentity)) return msg;
   const convo = conversations.upsert(msg.conversationId, {
     channel: msg.channel,
     customerRef: msg.customerRef,
@@ -100,13 +104,23 @@ async function captureSurveyReply(customerPhone, text) {
  * other tabs. `agentIdentity` comes from the authenticated session. Returns true
  * if the message was sent.
  */
-export async function sendReply({ agentIdentity, conversationId, text }, now = Date.now()) {
-  const convo = conversations.get(conversationId);
+export async function sendReply({ agentIdentity, conversationId, text, requestId }, now = Date.now()) {
+  const convo = db.enabled ? await messageStore.getConversation(conversationId) : conversations.get(conversationId);
   if (!convo || !text?.trim()) return false;
   // Only the assigned agent may reply on this conversation.
   if (convo.agentIdentity && convo.agentIdentity !== agentIdentity) return false;
-
-  conversations.addMessage(conversationId, "agent", text, now);
+  if (convo.optedOut) return false;
+  let messageId;
+  if (db.enabled) {
+    const key = `send:${agentIdentity}:${requestId}`;
+    const r = await db.query(`INSERT INTO conversation_messages(conversation_id,event_key,direction,body,status)
+      VALUES($1,$2,'agent',$3,'sending') ON CONFLICT(event_key) DO NOTHING RETURNING id`, [conversationId, key, text]);
+    if (!r.rows.length) {
+      const previous = (await db.query('SELECT status,body,conversation_id FROM conversation_messages WHERE event_key=$1', [key])).rows[0];
+      return previous?.status === 'accepted' && previous.body === text && previous.conversation_id === conversationId;
+    }
+    messageId = r.rows[0].id;
+  }
 
   const ok = await sendOutbound({
     conversationId,
@@ -114,6 +128,14 @@ export async function sendReply({ agentIdentity, conversationId, text }, now = D
     customerRef: convo.customerRef,
     text,
   });
+  if (db.enabled) {
+    // A timeout leaves an unknown outcome. Do not blindly resend a possibly
+    // accepted SMS: the operator can inspect Twilio delivery logs first.
+    await db.query('UPDATE conversation_messages SET status=$2 WHERE id=$1', [messageId, ok ? 'accepted' : 'unconfirmed']);
+    await db.query('UPDATE conversations SET updated_at=now() WHERE provider_id=$1', [conversationId]);
+  }
+  if (!ok) return false;
+  conversations.addMessage(conversationId, "agent", text, now);
 
   logChatMessage({
     contact: convo.contact,

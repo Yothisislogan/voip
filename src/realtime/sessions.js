@@ -14,6 +14,7 @@ const sessions = new Map();
 
 export function startSession(callSid, data) {
   if (!callSid) return;
+  if (sessions.has(callSid)) return sessions.get(callSid);
   sessions.set(callSid, {
     identity: data.identity || null,
     customerNumber: data.customerNumber || null,

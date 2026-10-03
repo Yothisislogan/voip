@@ -6,6 +6,7 @@ import { audit, listAudit } from "../audit.js";
 import { getConsentForCall } from "../store/consent.js";
 import * as crm from "../store/crm.js";
 import * as tracker from "../store/tracker.js";
+import { canAccessCall } from '../auth/call-access.js';
 
 /**
  * Authenticated CRM API over the Postgres store. All routes require a full
@@ -45,7 +46,7 @@ crmRouter.get("/api/crm/contacts", async (req, res) => {
 crmRouter.get("/api/crm/contacts/:id", async (req, res) => {
   const contact = await crm.getContact(req.params.id);
   if (!contact) return res.status(404).json({ error: "contact not found" });
-  const calls = await crm.listCalls({ contactId: contact.id });
+  const calls = await crm.listCalls({ contactId: contact.id, agent: req.agent });
   // Viewing a contact record touches PII — record who looked.
   audit({ req, action: "contact.view", entityType: "contact", entityId: contact.id });
   res.json({ contact, calls });
@@ -124,13 +125,13 @@ crmRouter.post("/api/crm/trackers/:id/revoke", requireRole("agent"), async (req,
 
 // ── calls ──
 crmRouter.get("/api/crm/calls", async (req, res) => {
-  const calls = await crm.listCalls({ contactId: req.query.contactId, limit: req.query.limit });
+  const calls = await crm.listCalls({ contactId: req.query.contactId, limit: req.query.limit, agent: req.agent });
   res.json({ calls });
 });
 
 crmRouter.get("/api/crm/calls/:sid", async (req, res) => {
   const detail = await crm.getCallDetail(req.params.sid);
-  if (!detail) return res.status(404).json({ error: "call not found" });
+  if (!detail || !canAccessCall(req.agent, detail.call)) return res.status(404).json({ error: "call not found" });
   // Include consent/recording state + history for compliance visibility.
   const consent = await getConsentForCall(req.params.sid);
   audit({ req, action: "call.view", entityType: "call", entityId: req.params.sid });

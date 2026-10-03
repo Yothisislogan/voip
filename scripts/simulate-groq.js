@@ -93,7 +93,11 @@ async function driveCall(idx) {
   }
   await sleep(400);
   await twilioPost("/voice/transcription", { CallSid: callSid, TranscriptionEvent: "transcription-stopped" });
-  await sleep(2500); // recap + extraction pipeline (groq mock)
+  for (let i = 0; i < 60; i++) {
+    const current = await getJson(`/api/crm/calls/${encodeURIComponent(callSid)}`);
+    if (current.call?.recap_state === 'ready') return current;
+    await sleep(250);
+  } // bounded wait for the durable recap worker
   return getJson(`/api/crm/calls/${encodeURIComponent(callSid)}`);
 }
 

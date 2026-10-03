@@ -9,6 +9,7 @@ export const client =
   config.twilio.accountSid && config.twilio.apiKeySid
     ? twilio(config.twilio.apiKeySid, config.twilio.apiKeySecret, {
         accountSid: config.twilio.accountSid,
+        timeout: 10000,
       })
     : null;
 

@@ -2,6 +2,7 @@ import { WebSocketServer } from "ws";
 import { URL } from "node:url";
 import { subscribeAgent } from "./bus.js";
 import { authenticateUpgrade } from "../auth/middleware.js";
+import { config } from '../config.js';
 
 /**
  * WebSocket channel that pushes screen-pop / coaching / recap events to the
@@ -31,6 +32,13 @@ export function attachAgentWss(server) {
       socket.destroy();
       return;
     }
+    const origin = req.headers.origin;
+    const allowed = new Set([config.publicBaseUrl, ...config.allowedOrigins].filter(Boolean));
+    if (origin && allowed.size && !allowed.has(origin)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     const agent = authenticateUpgrade(req);
     if (!agent?.identity) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -43,8 +51,10 @@ export function attachAgentWss(server) {
 
   wss.on("connection", (ws, req) => {
     const identity = req._agentIdentity;
+    ws.authRequest = req;
 
     const unsubscribe = subscribeAgent(identity, (event) => {
+      if (authenticateUpgrade(req)?.identity !== identity) { ws.close(1008, 'Session expired'); return; }
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(event));
     });
 
@@ -59,6 +69,10 @@ export function attachAgentWss(server) {
 
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
+      if (authenticateUpgrade(ws.authRequest)?.identity !== ws.authRequest._agentIdentity) {
+        ws.close(1008, 'Session expired');
+        continue;
+      }
       if (ws.isAlive === false) {
         ws.terminate();
         continue;

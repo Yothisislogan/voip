@@ -17,4 +17,20 @@ export const db = {
     if (!pool) return { rows: [] };
     return pool.query(text, params);
   },
+  async transaction(fn) {
+    if (!pool) throw new Error('Database is required for durable operations');
+    const connection = await pool.connect();
+    try {
+      await connection.query('BEGIN');
+      const result = await fn(connection);
+      await connection.query('COMMIT');
+      return result;
+    } catch (err) {
+      await connection.query('ROLLBACK');
+      throw err;
+    } finally {
+      connection.release();
+    }
+  },
+  async close() { await pool?.end(); },
 };

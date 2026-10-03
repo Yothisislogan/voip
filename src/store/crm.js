@@ -10,7 +10,7 @@ import { db } from "../db.js";
 export const crmDbEnabled = db.enabled;
 
 // Columns AI extraction / manual edits may write to a contact.
-const CONTACT_FIELDS = new Set([
+export const CONTACT_FIELDS = new Set([
   "first_name", "last_name", "email", "company", "title",
   "lifecycle_stage", "source", "policy_type", "carrier", "premium",
   "policy_number", "effective_date", "renewal_date", "coverage_status",
@@ -140,13 +140,17 @@ export async function getContact(id) {
 }
 
 /** Recent calls (optionally for one contact), with score fields joined. */
-export async function listCalls({ contactId, limit = 50 } = {}) {
+export async function listCalls({ contactId, limit = 50, agent } = {}) {
   if (!db.enabled) return [];
   try {
     const lim = Math.min(Number(limit) || 50, 200);
     const params = [];
     let where = "";
     if (contactId) { params.push(contactId); where = "WHERE c.contact_id = $1"; }
+    if (agent && agent.role !== 'admin') {
+      params.push(agent.identity);
+      where += `${where ? ' AND' : 'WHERE'} (c.agent_identity=$${params.length} OR (c.agent_identity IS NULL AND c.route_targets ? $${params.length}))`;
+    }
     params.push(lim);
     const r = await db.query(
       `SELECT c.*, s.score, s.sentiment, s.outcome
@@ -200,7 +204,7 @@ export function shapeContactForUi(row) {
     policyType: row.policy_type || "",
     carrier: row.carrier || "",
     lifecycleStage: row.lifecycle_stage || "lead",
-    url: null,
+    url: `/contacts.html?id=${encodeURIComponent(row.id)}`,
   };
 }
 

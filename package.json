@@ -1,7 +1,7 @@
 {
   "name": "wit-connect-telephony",
   "version": "0.1.0",
-  "description": "WIT Connect — Twilio voice starter: browser softphone token, TwiML webhooks, and call/recording logging into the WIT Connect Postgres schema.",
+  "description": "WiT Connect \u2014 durable browser voice, customer identity, transcripts, messaging, and signed WiTnext integration.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -27,6 +27,7 @@
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.31.0",
     "@anthropic-ai/sdk": "^0.32.1",
+    "@twilio/voice-sdk": "2.18.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

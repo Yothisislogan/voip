@@ -1,308 +1,133 @@
-# WIT Connect — Telephony Starter
+# WiT Connect voice service
 
-A Twilio **proof of concept** for WIT Connect (Build Strategy step 2): a browser
-softphone that places and receives real calls, with TwiML webhooks that log call
-lifecycle and recordings into the `wit_connect_schema.sql` Postgres database.
+A browser calling and customer-workspace service built on Twilio Voice, Express,
+and PostgreSQL, with signed WiTnext integration and an optional Dialpad bridge
+for coexistence during migration.
 
-This is intentionally minimal — it proves browser calling, inbound routing,
-recording, and DB logging end to end. It is **not** a finished contact center
-(no ring groups, TaskRouter queues, or SLA logic yet — those are later phases).
+This version replaces the demo agent screen with a working, authenticated phone
+workspace and makes call records, finalized transcripts, recaps, messages, and
+outbound integration work durable. It is a **pilot implementation**, not a claim
+of complete Dialpad parity or certification for production telephony.
 
-## What's inside
+- [Dialpad replacement scope and acceptance gates](docs/dialpad-replacement.md)
+- [Voice deployment, verification, and recovery runbook](docs/voice-service-runbook.md)
+- [WiTnext event and customer-identity contract](docs/witnext-integration-contract.md)
 
-```
-src/
-  server.js            Express app
-  config.js            env loading + validation
-  db.js                Postgres pool (no-op if DATABASE_URL unset)
-  twilio.js            REST client + Voice access-token minting
-  routes/
-    token.js           GET /token  -> browser SDK token
-    voice.js           POST /voice/outbound, /voice/inbound, /voice/dial-status, /voice/status
-    recording.js       POST /recording/status -> call_recordings
-  services/calls.js    maps Twilio webhooks onto the schema tables
-public/
-  softphone.html       working browser softphone (WIT-branded)
-```
+## What works in this repository
 
-## Prerequisites
+- `/phone.html`: browser registration, inbound answer/reject, outbound dialing,
+  hangup, mute, touch tones, microphone/output selection where supported, token
+  renewal, connection/quality feedback, and inbound blind transfer to an agent.
+  `/agent.html` and `/softphone.html` lead to this workspace.
+- Searchable, paginated call history, voicemail filtering, protected recording
+  playback, saved notes and dispositions, transcript/recap details, customer
+  links, and explicit confirmation of uncertain transfer-lead matches.
+- Configurable business hours, holidays, simultaneous ringing, fixed priority,
+  round robin, and longest idle routing. Configured routes use fresh agent
+  presence and atomic reservations; unavailable/closed routes go to voicemail.
+- Separate parent/child call state, monotonic lifecycle updates, duplicate
+  transcript protection, restart-safe recap work, late-transcript regeneration,
+  and delivery of call completion independently of AI success.
+- SmartFinancial source-number separation: a transfer line is never treated as
+  the customer's phone. Exact identifiers can match automatically; proximity to
+  an email alone produces a suggestion requiring agent confirmation.
+- A transactional WiTnext outbox with stable event IDs, fresh replay-protection
+  signatures, integration identity headers, retry backoff, leases, and visible
+  failed work. Recap action items use the receiver's expected field name.
+- Persistent Twilio Conversations threads, assigned-agent replies, opt-out
+  tracking, send-intent deduplication, and explicit unconfirmed send outcomes.
+- Existing local CRM, rules/AI coaching and extraction, Google OAuth + Twilio
+  Verify MFA, role controls, CSRF, webhook signatures, audit logging, backups,
+  retention tooling, and optional ERPNext/survey integrations.
 
-- Node.js 18+
-- A Twilio account with a voice-capable phone number
-- (Optional) the WIT Connect Postgres database loaded from `wit_connect_schema.sql`
-- [ngrok](https://ngrok.com) (or any tunnel) so Twilio can reach local webhooks
+Live PSTN calls, number provisioning, carrier delivery, OAuth/MFA credentials,
+recording playback, and the production WiTnext receiver still require testing in
+your accounts. Hold/resume, warm transfer, conferences, full contact-center ACD,
+supervisor controls, native mobile/desktop clients, E911, and number porting are
+not implemented here. **Keep Dialpad until the documented cutover gates pass.**
 
-## Setup
+## Local setup
 
-```bash
-npm install
-cp .env.example .env       # then fill in the values
-```
-
-Fill `.env`:
-
-1. **Account SID** — Twilio Console home.
-2. **API Key SID + Secret** — Console → Account → *API keys & tokens* → create a Standard key. Signs the browser tokens.
-3. **TwiML App SID** — Console → Voice → TwiML → *TwiML Apps* → create one.
-4. **Caller ID** — a Twilio number you own, in E.164 (`+1480…`).
-
-## Run
-
-```bash
-npm run dev          # starts on :3000
-ngrok http 3000      # in a second terminal -> copy the https URL
-```
-
-Put the ngrok URL in `PUBLIC_BASE_URL`, then point Twilio at these webhooks:
-
-| Twilio setting | URL |
-| --- | --- |
-| **TwiML App → Voice Request URL** | `{PUBLIC_BASE_URL}/voice/outbound` |
-| **Phone Number → A Call Comes In** | `{PUBLIC_BASE_URL}/voice/inbound` |
-
-Open **http://localhost:3000/softphone.html?identity=marisol.vega**.
-
-- **Outbound:** type a number, press **Call**. The browser → `/voice/outbound` → bridges to the PSTN.
-- **Inbound:** call your Twilio number. It rings the browser client whose `identity` matches `DEFAULT_AGENT_IDENTITY`; no answer drops to voicemail.
-- Each call writes a `calls` row; recordings land in `call_recordings` with a 13-month retention date.
-
-## How it maps to the schema
-
-| Event | Table write |
-| --- | --- |
-| Outbound/inbound TwiML | `INSERT calls` (+ stub `customers`, link `phone_numbers`) |
-| `/voice/status` callback | `UPDATE calls` status / answered_at / ended_at / talk_seconds |
-| `/recording/status` callback | `INSERT call_recordings` (consent=disclosed, retention) |
-
-## AI sales assist + ERPNext CRM (new)
-
-Three capabilities layer on top of the softphone. All are **optional and
-feature-flagged** — if their keys are unset, the phone works exactly as before.
-
-1. **ERPNext screen-pop** — when a call connects, the backend looks up the
-   caller's number in ERPNext (Frappe REST API, token auth) as a Contact then a
-   Lead, and pushes the matching record (with a deep link) to the agent screen.
-2. **Real-time coaching** — Twilio real-time transcription forks the call audio
-   to `/voice/transcription`; finalized utterances are buffered and fed to Claude,
-   which returns short cues across four lenses (objection handling, compliance
-   disclosures, next-best question, sentiment/pacing) pushed live to the agent.
-3. **End-of-call recap** — when transcription stops, Claude summarizes the full
-   transcript into structured fields and writes a Communication (on the record's
-   timeline) plus a Call Log onto the customer's ERPNext record.
-
-### Architecture
-
-```
-Twilio call ──<Start><Transcription>──▶ POST /voice/transcription ─┐
-                                                                   ├─▶ transcript buffer (per CallSid)
-inbound/outbound ─▶ ERPNext Contact/Lead lookup ─▶ screen-pop     │
-                                                                   ▼
-Agent browser ◀── WebSocket /ws/agent ◀── coaching cues (Claude) + screen-pop
-                                                                   │
-transcription-stopped ─▶ recap (Claude) ─▶ Communication + Call Log on ERPNext record
-```
-
-The unified **agent workspace** is at `/agent.html` — dialer, live CRM card, and
-coaching cues in one screen. Access requires an authenticated session (see
-**Authentication** below); the agent's identity comes from that session, not a
-URL parameter.
-
-| File | Role |
-| --- | --- |
-| `src/crm/erpnext.js` | ERPNext (Frappe) client (token auth, find-contact-by-phone, write Communication/Call Log) |
-| `src/ai/coach.js` / `recap.js` | Claude coaching cues + structured recap |
-| `src/ai/transcript.js` | per-call transcript buffer |
-| `src/realtime/orchestrator.js` | ties transcription → coaching → recap together |
-| `src/realtime/ws.js` / `bus.js` / `sessions.js` | WebSocket push, agent event bus, call registry |
-| `public/agent.html` | unified agent workspace |
-
-### Configuration
-
-See `.env.example`. Everything is optional:
-
-- **ERPNext** — `ERPNEXT_BASE_URL`, `ERPNEXT_API_KEY`, `ERPNEXT_API_SECRET`.
-  Generate keys in ERPNext under **User → Settings → API Access → Generate Keys**,
-  using a dedicated integration user with access to Contact, Lead, Communication,
-  and Call Log. Set `ERPNEXT_UI_URL` if the desk URL differs from the API base.
-- **Claude** — `LLM_BACKEND` selects the backend:
-  - `anthropic` (default): direct API, set `ANTHROPIC_API_KEY`.
-  - `bedrock`: Amazon Bedrock — set `AWS_REGION` + AWS credentials (standard AWS
-    chain); no API key. Keeps prompts/outputs in your AWS account/region under
-    your BAA (see `docs/secure-ai-architecture.md`). Model IDs are auto-prefixed
-    with `anthropic.`.
-  `ANTHROPIC_MODEL` defaults to `claude-opus-4-8` (recap). Real-time cues are
-  latency-sensitive: set `ANTHROPIC_COACHING_MODEL` to a faster model (e.g.
-  `claude-haiku-4-5`) if cue latency matters more than depth. The coaching/recap
-  code is backend-agnostic — only the client construction changes.
-- **Flags** — `COACHING_ENABLED`, `RECAP_ENABLED`, `COACHING_THROTTLE_MS`.
-
-Real-time transcription POSTs to your public URL, so **`PUBLIC_BASE_URL` must be
-set** (ngrok locally) for coaching/recap to run.
-
-### Compliance ⚠️
-
-This adds **AI transcription** on top of call recording. Many US states require
-two-party consent. The inbound greeting now discloses recording **and**
-transcription; ensure your outbound flow and any custom greetings do the same,
-and confirm state-by-state requirements before going live. Transcripts are held
-in process memory only for the duration of a call and dropped after the recap;
-they are not persisted by this app.
-
-### Tests
+Use Node 22 or a compatible supported Node release and PostgreSQL 16. The current
+CI runs Node 20; `Dockerfile` uses Node 22.
 
 ```bash
-npm test   # node --test: phone normalization, transcript buffering,
-           # recap formatting, speaker mapping, session registry, WS delivery
+npm ci
+cp .env.example .env
+# Set DATABASE_URL and the settings described below.
+npm run migrate
+npm start
 ```
 
-### What to verify on a live setup
+Open `http://localhost:3000/phone.html` (or your configured `PORT`). For an
+isolated development environment, use `AUTH_REQUIRED=false`; never expose that
+configuration publicly. The page works with persisted call data without Twilio
+credentials and clearly reports that calling needs provider setup. It contains
+no seeded demo customers.
 
-- Place an outbound call from `/agent.html` → a known CRM number; confirm the
-  screen-pop card shows the contact and the deep link opens ERPNext.
-- Speak both sides; confirm coaching cues appear within a few seconds.
-- Hang up; confirm a recap renders and a Communication appears on the record's
-  timeline in ERPNext.
-- With `ANTHROPIC_API_KEY` / ERPNext unset, confirm the phone still places and
-  receives calls normally (features silently skip).
+For real calls configure `PUBLIC_BASE_URL` to the exact public HTTPS origin,
+Twilio account/API credentials, `TWILIO_AUTH_TOKEN`, a voice-enabled caller ID,
+and a TwiML App. Complete the provider setup in the runbook. Production startup
+requires PostgreSQL, HTTPS, secure authentication settings, an agent directory,
+and authenticated email intake if that endpoint is enabled.
 
-## Messaging (SMS now, Apple Messages for Business later)
+### Essential configuration
 
-A provider-agnostic messaging channel that surfaces customer text threads in the
-agent workspace, screen-pops the customer from ERPNext, and logs the
-conversation to their CRM timeline — reusing the same WebSocket + ERPNext
-plumbing as voice. Today it runs on **Twilio Conversations** (SMS/WhatsApp);
-**Apple Messages for Business (AMB)** plugs in as another channel once an
-Apple-approved MSP is live (see `docs/messaging-integration-contract.md`).
-
-```
-customer text ─▶ provider (Twilio Conversations / Apple MSP)
-        │  onMessageAdded webhook
-        ▼
-POST /messaging/inbound ─▶ normalize ─▶ conversation buffer ─▶ ERPNext screen-pop + log
-        │                                                              │
-        └─▶ WebSocket /ws/agent ("message")  ◀── agent reply via POST /messaging/send
-```
-
-- **Channel-pluggable:** `src/messaging/providers.js` holds the adapters; add an
-  Apple-MSP adapter there without touching the core. Selected by `MESSAGING_PROVIDER`.
-- **Screen-pop nuance:** SMS exposes the phone (so ERPNext lookup works); **AMB
-  uses an opaque Apple id**, so AMB threads identify the customer via an in-chat
-  step rather than phone.
-- **Routing (MVP):** inbound threads route to `DEFAULT_AGENT_IDENTITY`. Replace
-  with a queue/availability model later.
-- **Same PII posture:** chat carries customer PII and flows into ERPNext, so the
-  HIPAA-aligned controls in `docs/secure-ai-architecture.md` extend here.
-
-Setup: create a **Twilio Conversations** service, set `TWILIO_CONVERSATIONS_SERVICE_SID`,
-and point its `onMessageAdded` webhook at `{PUBLIC_BASE_URL}/messaging/inbound`.
-
-## Postgres CRM & data pipeline
-
-With `DATABASE_URL` set, the app owns a **Postgres CRM** as its operational store
-(schema in `db/schema.sql`, applied via `npm run migrate`). The call/message
-pipeline reads and writes it; ERPNext remains an optional external mirror.
-
-| Table | Filled by |
+| Setting | Purpose |
 | --- | --- |
-| `contacts` (leads) | phone match on call/SMS; email intake; AI-extracted insurance fields |
-| `calls` | each call, linked to a contact |
-| `transcript_segments` | every finalized utterance (persistent) |
-| `call_scores` | 0–100 lead/quality score + factors, per call |
-| `surveys` | post-call CSAT/NPS SMS + captured reply |
-| `email_intake` | parsed inbound emails → leads |
+| `DATABASE_URL` | Operational records, transcripts, messages, durable work |
+| `PUBLIC_BASE_URL` | Exact public HTTPS origin used for signed webhook validation |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Account and webhook authentication |
+| `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET` | Voice tokens and provider REST operations |
+| `TWILIO_TWIML_APP_SID`, `TWILIO_CALLER_ID` | Browser outbound application and provisioned caller ID |
+| `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Signed sessions and Google OAuth |
+| `AGENT_DIRECTORY`, `TWILIO_VERIFY_SERVICE_SID` | Allowed identities, roles, and second factor |
+| `VOICE_ROUTING_JSON` | Optional route strategy, hours, time zone, holidays, agents |
+| `WITNEXT_URL`, `WITNEXT_INTEGRATION_ID`, `WITNEXT_INTEGRATION_SECRET` | Signed WiTnext integration; provision matching receiver identity |
+| `LEAD_SIGNAL_TOKEN` | Dedicated bearer secret for normalized incoming lead signals |
+| `SHARED_SOURCE_NUMBERS` | Vendor transfer lines excluded from customer matching |
+| `DIALPAD_WEBHOOK_SECRET`, `DIALPAD_API_KEY` | Optional coexistence events and transcript retrieval |
+| `EMAIL_INBOUND_TOKEN` | Authenticate JSON/urlencoded email intake |
 
-What happens on a call, when `DATABASE_URL` is set:
+See `.env.example` for model selection, recording, messaging, retention, and
+routing settings. A configured provider adapter does not establish a BAA,
+recording-consent policy, messaging registration, or a production readiness claim.
 
-1. **Screen-pop** matches/creates the caller by phone (`contacts`) and opens a `calls` row.
-2. Each utterance is **persisted** to `transcript_segments` (alongside the in-memory buffer used for live coaching).
-3. On hang-up: the recap runs, the call is **scored** (`call_scores`), **lead fields are extracted** from the transcript onto the contact, and (opt-in) a **survey SMS** is sent — the reply is matched back and stored.
+## Validation
 
-**Email intake:** point a SendGrid/Mailgun inbound-parse webhook at
-`/email/inbound`; it parses the sender, phone, and insurance details into a
-lead. Optional shared secret via `EMAIL_INBOUND_TOKEN`.
-
-**Scoring & extraction are local/deterministic** — no LLM required — so they work
-regardless of `LLM_BACKEND`.
-
-### CRM UI + API
-
-- **Leads list + editor:** `/contacts.html` — search, view, and edit contacts
-  (agent-facing; reachable from the workspace rail).
-- **Call detail:** `/call.html?sid=<CallSid>` — transcript, recap, score +
-  factors, extracted fields, survey result.
-- **Authenticated API** (`requireAuth`): `GET /api/crm/contacts[?q=]`,
-  `GET|PATCH /api/crm/contacts/:id`, `GET /api/crm/calls[?contactId=]`,
-  `GET /api/crm/calls/:sid`.
-
-### Migrations, validation, backups, deploy
-
-- **Migrations:** versioned SQL in `db/migrations/`, tracked in
-  `schema_migrations`. `npm run migrate` applies pending ones (idempotent;
-  docker-compose runs it on boot).
-- **Fail-fast config:** in `NODE_ENV=production`, a bad/insecure config (no
-  `SESSION_SECRET`, auth bypass on, no agents, …) refuses to start.
-- **Backups:** `scripts/backup.sh` (gzip + retention) — see `docs/backups.md`.
-- **Deploy:** `docker compose up -d --build` runs the app + Postgres and applies
-  migrations automatically. See `docs/deploy-hetzner.md` and the go-live
-  `docs/deploy-checklist.md` (Cloudflare + Hetzner).
-
-## Authentication (Google OAuth + 2FA)
-
-The app pages, the Twilio token endpoint, and the agent WebSocket all require an
-authenticated session. Agents sign in with **Google**, then complete a **second
-factor** via **Twilio Verify** (SMS or email). Identity is derived from a signed,
-httpOnly session cookie — never from a URL parameter — so an agent can only ever
-get a token for, and receive live events (which contain customer PII) for, their
-own identity.
-
-### Flow
-
-```
-/agent.html ──(no session)──▶ /login ──"Sign in with Google"──▶ Google OAuth
-   ▲                                                                  │
-   │                                            verified email checked against
-   │                                                  AGENT_DIRECTORY allowlist
-   │                                                                  │
-   └──(full session cookie)── /2fa ◀──(pending session + Twilio Verify code)──┘
+```bash
+npm run lint
+npm test
+npm run migrate
+# Use a disposable database with migrations applied; these tests mutate it.
+VOIP_TEST_DATABASE_URL=postgresql://.../voip_test node --test test/voice-service.integration.test.js
+npm run restore-test
+npm run simulate
+npm run simulate:groq
+npm run simulate:witnext
 ```
 
-- **Allowlist:** only emails in `AGENT_DIRECTORY` can sign in; each maps to a
-  Twilio identity and an MFA destination. (Optionally also restrict to a Google
-  Workspace domain with `GOOGLE_HOSTED_DOMAIN`.)
-- **Two trust levels:** `pending-2fa` after Google, `full` only after the code is
-  verified. Only `full` may use the app.
-- **Sessions** are stateless signed JWTs in an httpOnly + SameSite=Lax cookie
-  (Secure when served over HTTPS) — no session store, multi-instance friendly.
+The simulations launch local HTTP mock providers; allow loopback networking.
+Run them sequentially without another app worker attached to their database.
+The opt-in DB tests cover actual concurrent transactions, call legs, duplicate
+transcripts, restart recovery, late customer identity, agent reservations,
+exclusive worker leases, and persistent opt-out state. They do not place calls
+or send real SMS.
 
-### Setup
+## Operations
 
-1. **Google:** Cloud Console → APIs & Services → Credentials → OAuth client ID
-   (Web application). Add redirect URI `{PUBLIC_BASE_URL}/auth/google/callback`.
-   Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
-2. **Twilio Verify:** Console → Verify → Services → create one; set
-   `TWILIO_VERIFY_SERVICE_SID`. (For the email channel, configure Verify's email
-   integration.)
-3. **Secrets:** `SESSION_SECRET` = `openssl rand -hex 32`.
-4. **Allowlist:** fill `AGENT_DIRECTORY` (see `.env.example`).
+- `/health` checks process liveness; `/ready` checks the database and job schema.
+- The phone workspace shows admin-only operations metrics and failed-job retry.
+- New `service_jobs` are drained automatically by the server. `npm run retry-jobs`
+  handles the separate legacy `failed_jobs` queue.
+- `npm run purge-retention` enforces configured windows. Default `0` preserves
+  transcripts, recordings, messages, and audit data indefinitely. Completed job
+  payloads clear after 30 days; idempotency keys remain. Contact/lead/email data,
+  backups, failed/pending jobs, and downstream CRM copies require separate policy.
+- Backup and restore procedures: [backups](docs/backups.md). Deployment references:
+  [Hetzner](docs/deploy-hetzner.md), [checklist](docs/deploy-checklist.md).
+  The voice-service runbook governs this release's additional requirements.
 
-### Local dev / testing without Google
-
-Two options, both **dev-only** (remove before production):
-
-- **`DEV_LOGIN_ENABLED=true`** — keeps auth on, but the login page shows a
-  "Continue as developer" field that signs you in as any identity, skipping
-  Google + 2FA. Good for testing the real session flow (e.g. on Render) before
-  Google OAuth is configured. Needs `SESSION_SECRET` set.
-- **`AUTH_REQUIRED=false`** — bypasses auth entirely and injects `DEV_IDENTITY`;
-  no login step at all. The server prints a loud warning.
-
-## Still required before production (planning doc §10.1)
-
-This starter does not handle, and a real launch must: Twilio Trust Hub + **A2P 10DLC**
-registration, number porting + failover, recording-consent disclosure by state,
-authenticated SSO (don't trust the `identity` query param), webhook signature
-validation (`twilio.validateRequest`), and the routing_rules / ring_groups logic
-that this PoC stubs with a single agent identity.
-
-> Twilio package versions, SDK release URLs, and pricing change. Validate against
-> current Twilio docs before committing, exactly as the WIT Connect plan advises.
+The PostgreSQL queue supports competing workers. Live browser events still use
+an in-process event bus; do not assume multi-instance live delivery or a tested
+high-availability service without adding a shared event transport.

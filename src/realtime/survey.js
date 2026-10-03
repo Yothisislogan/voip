@@ -20,12 +20,13 @@ export async function maybeSendSurvey({ callSid, session }) {
       from: config.twilio.callerId,
       body: config.survey.text,
     });
-    await createSurvey({
+    const survey = await createSurvey({
       callSid,
       contactId: session.contactId,
       question: config.survey.text,
       channel: "sms",
     });
+    if (!survey) throw new Error('Survey was sent but local tracking was not saved');
     return true;
   } catch (err) {
     console.error("survey send failed:", err.message);

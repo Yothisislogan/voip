@@ -3,29 +3,30 @@ import { log } from "../src/logger.js";
 import { dueJobs, resolveJob, bumpJob } from "../src/jobs/deadletter.js";
 import { handleInbound } from "../src/messaging/orchestrator.js";
 import { sendWitnextEvent } from "../src/integrations/witnext.js";
+import { doScreenPop, onCallComplete, onUtterance } from '../src/realtime/orchestrator.js';
 
 /**
  * Dead-letter retry runner. Drains due jobs from failed_jobs with exponential
  * backoff. Run on a schedule (cron / systemd timer): `npm run retry-jobs`.
  *
- * NOTE: session-bound jobs (onUtterance / onCallComplete / screenPop) depend on
- * in-memory call state that only exists in the live server process, so they
- * cannot be replayed from a separate process — they will fail here and back off
- * until max_attempts, remaining visible for manual inspection. Stateless jobs
- * (handleInbound) replay cleanly. This is intentional: the DLQ's first job is to
- * make sure nothing is lost silently.
+ * Legacy failed_jobs only. New service_jobs are drained by the server worker.
+ * Voice handlers now reconstruct durable call context from PostgreSQL.
  */
 
 const HANDLERS = {
+  screenPop: ({ callSid }) => doScreenPop(callSid),
+  onCallComplete: ({ callSid }) => onCallComplete(callSid),
+  onUtterance: ({ callSid, track, transcript }) => onUtterance(callSid, track, transcript),
   handleInbound: (payload) => handleInbound(payload.body),
   // WiTNext deliveries replay with their ORIGINAL event_id so the receiver
   // dedupes; timestamp/nonce/signature are regenerated per attempt.
-  witnextEvent: (payload) =>
-    sendWitnextEvent(payload.eventType, payload.payload, {
+  witnextEvent: (payload) => {
+    if (!config.witnext.enabled) throw new Error('WiTnext bridge disabled; delivery remains pending');
+    return sendWitnextEvent(payload.eventType, payload.payload, {
       eventId: payload.eventId,
       occurredAt: payload.occurredAt,
-    }),
-  // Session-bound kinds have no replayable handler here (see note above).
+    });
+  },
 };
 
 async function main() {
@@ -45,7 +46,7 @@ async function main() {
     const handler = HANDLERS[job.kind];
     if (!handler) {
       skipped++;
-      await bumpJob(job.id, job.attempts, "no replayable handler (session-bound job)");
+      await bumpJob(job.id, job.attempts, "no registered replay handler");
       continue;
     }
     try {

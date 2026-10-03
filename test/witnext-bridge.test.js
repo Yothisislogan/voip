@@ -1,6 +1,7 @@
 // WiTNext bridge: signing, verification, delivery, and retry semantics.
 process.env.SESSION_SECRET = "test-session-secret";
 process.env.WITNEXT_URL = "http://127.0.0.1:1"; // repointed at the mock below
+process.env.WITNEXT_INTEGRATION_ID = "test-integration";
 process.env.WITNEXT_INTEGRATION_SECRET = "witnext-test-secret";
 
 import http from "node:http";
@@ -23,6 +24,8 @@ const mock = http.createServer((req, res) => {
   let raw = "";
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
+    if (req.headers["x-wit-integration-id"] !== "test-integration") return res.writeHead(401).end();
+    if (mode === "conflict") return res.writeHead(409).end();
     if (mode === "fail") return res.writeHead(500).end();
     const ok = verifyWitnextRequest({
       secret: config.witnext.secret,
@@ -34,7 +37,7 @@ const mock = http.createServer((req, res) => {
     });
     if (!ok) return res.writeHead(403).end(JSON.stringify({ error: "bad signature" }));
     const id = req.headers["x-wit-event-id"];
-    if (seenEventIds.has(id)) return res.writeHead(409).end(); // duplicate → idempotent
+    if (seenEventIds.has(id)) return res.writeHead(200).end(JSON.stringify({ status: "duplicate" })); // receiver contract
     seenEventIds.add(id);
     received.push({ path: req.url, body: JSON.parse(raw) });
     res.writeHead(202).end();
@@ -101,11 +104,11 @@ test("email events route to the email-events path", async () => {
   assert.ok(received[0].path.includes("/integrations/email/events"));
 });
 
-test("retry with the same event_id is treated as delivered (receiver 409)", async () => {
+test("retry with the same event_id is treated as delivered (receiver 200)", async () => {
   received = [];
   const id = await sendWitnextEvent("call.completed", { call_id: "CAbridge2" }, { eventId: "fixed-id-1" });
   assert.equal(id, "fixed-id-1");
-  // Second attempt (as the DLQ retry would do) → receiver 409 → resolves, no dupe.
+  // Second attempt (as the DLQ retry would do) → receiver 200 → resolves, no dupe.
   const again = await sendWitnextEvent("call.completed", { call_id: "CAbridge2" }, { eventId: "fixed-id-1" });
   assert.equal(again, "fixed-id-1");
   assert.equal(received.length, 1); // receiver stored it exactly once
@@ -122,4 +125,10 @@ test("bridge is a no-op when not configured", async () => {
   config.witnext.url = "";
   assert.equal(await sendWitnextEvent("call.completed", { call_id: "CAx" }), null);
   config.witnext.url = savedUrl;
+});
+
+ test("409 replay rejection is not mistaken for delivered", async () => {
+  mode = "conflict";
+  await assert.rejects(() => sendWitnextEvent("call.completed", { call_id: "CAreplay" }), /409/);
+  mode = "ok";
 });
