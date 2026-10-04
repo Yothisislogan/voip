@@ -15,7 +15,8 @@
     "retry-jobs": "node scripts/retry-jobs.js",
     "purge-retention": "node scripts/purge-retention.js",
     "lint": "eslint src scripts test",
-    "test": "node --test"
+    "test": "node --test",
+    "start:render": "node scripts/start-render.js"
   },
   "engines": {
     "node": ">=18"

@@ -10,6 +10,7 @@ outbound integration work durable. It is a **pilot implementation**, not a claim
 of complete Dialpad parity or certification for production telephony.
 
 - [Dialpad replacement scope and acceptance gates](docs/dialpad-replacement.md)
+- [Render deployment and existing-service activation](docs/render-deployment.md)
 - [Voice deployment, verification, and recovery runbook](docs/voice-service-runbook.md)
 - [WiTnext event and customer-identity contract](docs/witnext-integration-contract.md)
 
