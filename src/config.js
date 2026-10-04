@@ -127,6 +127,7 @@ export const config = {
   // HMAC-signed, and forwarded to WiTNext's integration API. Enabled only when
   // both the URL and a dedicated secret are set.
   witnext: {
+    integrationId: process.env.WITNEXT_INTEGRATION_ID || null,
     url: (process.env.WITNEXT_URL || "").replace(/\/$/, ""),
     secret: process.env.WITNEXT_INTEGRATION_SECRET || null,
     callEventsPath: process.env.WITNEXT_CALL_EVENTS_PATH || "/api/v1/integrations/dialpad/events",
@@ -137,11 +138,23 @@ export const config = {
     },
   },
 
+  voice: {
+    // Shared lead-vendor caller IDs must never become a customer's identity.
+    sharedSourceNumbers: (process.env.SHARED_SOURCE_NUMBERS || '+16692793623').split(',').map(s => s.trim()),
+    routing: parseRouting(process.env.VOICE_ROUTING_JSON),
+    signalToken: process.env.LEAD_SIGNAL_TOKEN || null,
+    matchWindowMinutes: Number(process.env.LEAD_MATCH_WINDOW_MINUTES) || 10,
+    recordingEnabled: process.env.VOICE_RECORDING_ENABLED !== 'false',
+    // Outbound geographic permission guard; provider permissions remain required.
+    allowedPrefixes: (process.env.VOICE_ALLOWED_PREFIXES || '+1').split(',').map(s => s.trim()).filter(Boolean),
+  },
+
   // ── Dialpad inbound webhooks (experimental, flag-gated) ──
   // Dialpad signs webhook payloads as an HS256 JWT with the subscription's
   // webhook secret. Events are normalized and forwarded to WiTNext via the
   // bridge above. Requires the secret — unsigned Dialpad events are rejected.
   dialpad: {
+    apiKey: process.env.DIALPAD_API_KEY || null,
     webhookSecret: process.env.DIALPAD_WEBHOOK_SECRET || null,
     get enabled() {
       return Boolean(this.webhookSecret);
@@ -197,7 +210,8 @@ export const config = {
     csp:
       process.env.CONTENT_SECURITY_POLICY ||
       "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; " +
+        "img-src 'self' data:; connect-src 'self' https://eventgw.twilio.com wss://voice-js.roaming.twilio.com https://media.twiliocdn.com https://sdk.twilio.com; " +
+        "media-src 'self' blob: mediastream: https://media.twiliocdn.com https://sdk.twilio.com; frame-ancestors 'none'; base-uri 'self'; " +
         "form-action 'self'; object-src 'none'",
     hstsMaxAge: Number(process.env.HSTS_MAX_AGE) || 15552000, // 180 days
     rateLimit: {
@@ -216,12 +230,20 @@ export const config = {
 
   // Data retention (days). 0 = keep forever. Enforced by scripts/purge-retention.js.
   retention: {
+    messageDays: Number(process.env.RETENTION_MESSAGE_DAYS) || 0,
+    jobDays: Number(process.env.RETENTION_JOB_DAYS) || 30,
     transcriptDays: Number(process.env.RETENTION_TRANSCRIPT_DAYS) || 0,
     recordingDays: Number(process.env.RETENTION_RECORDING_DAYS) || 0,
     auditDays: Number(process.env.RETENTION_AUDIT_DAYS) || 0,
     deleteTwilioRecordings: process.env.RETENTION_DELETE_TWILIO_RECORDINGS === "true",
   },
 };
+
+function parseRouting(raw) {
+  if (!raw) return null;
+  try { return JSON.parse(raw); }
+  catch { return { invalid: true }; }
+}
 
 function parseAgentDirectory(raw) {
   if (!raw) return [];

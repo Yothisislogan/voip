@@ -1,225 +1,188 @@
-import { Router } from "express";
-import twilio from "twilio";
-import { config, webhookUrl } from "../config.js";
-import { recordCall, updateCallStatus } from "../services/calls.js";
-import { startSession, identityFromClient } from "../realtime/sessions.js";
-import { doScreenPop, onUtterance, onCallComplete } from "../realtime/orchestrator.js";
-import { runTracked } from "../jobs/deadletter.js";
+import { Router } from 'express';
+import twilio from 'twilio';
+import { config, webhookUrl } from '../config.js';
+import { db } from '../db.js';
+import { startSession, identityFromClient, getSession } from '../realtime/sessions.js';
+import { doScreenPop, onUtterance, resolveSpeaker, restoreSession } from '../realtime/orchestrator.js';
+import { runTracked } from '../jobs/deadletter.js';
+import { enqueueJob } from '../jobs/queue.js';
+import { createCall, applyStatus, loadCall, persistUtterance } from '../services/call-state.js';
+import { selectTargets } from '../services/routing.js';
+import { normalizePhone } from '../util/phone.js';
+import { asyncRoute } from '../util/async-route.js';
+import { publishToAgent } from '../realtime/bus.js';
 
 const { VoiceResponse } = twilio.twiml;
 export const voiceRouter = Router();
+const STATUS_EVENTS = 'initiated ringing answered completed';
+const DISCLOSURE = 'This call may be recorded and transcribed for quality and training.';
 
-// Status callback events Twilio should send us for each leg.
-const STATUS_EVENTS = "initiated ringing answered completed";
-
-// AI features need a public URL Twilio can POST transcripts to.
-const aiPipelineOn =
-  Boolean(config.publicBaseUrl) && (config.coachingEnabled || config.recapEnabled);
-
-/**
- * Fork a real-time transcript of the call to /voice/transcription. <Start> is
- * non-blocking, so transcription runs alongside the <Dial> that follows.
- * partialResults=false → we only receive finalized utterances.
- */
 function maybeStartTranscription(twiml) {
-  if (!aiPipelineOn) return;
-  const start = twiml.start();
-  start.transcription({
-    name: "wit-coaching",
-    track: "both_tracks",
-    partialResults: false,
-    statusCallbackUrl: webhookUrl("/voice/transcription"),
-  });
+  if (!config.publicBaseUrl || (!config.coachingEnabled && !config.recapEnabled)) return;
+  twiml.start().transcription({ name: 'wit-coaching', track: 'both_tracks', partialResults: false,
+    statusCallbackUrl: webhookUrl('/voice/transcription') });
+}
+function recordingOptions() {
+  return config.voice.recordingEnabled ? { record: 'record-from-answer-dual',
+    recordingStatusCallback: webhookUrl('/recording/status'), recordingStatusCallbackEvent: 'completed absent' } : {};
+}
+function statusUrl(root, identity) {
+  return webhookUrl(`/voice/status?parent=${encodeURIComponent(root)}${identity ? `&agent=${encodeURIComponent(identity)}` : ''}`);
+}
+function sendXml(res, twiml) { return res.type('text/xml').send(twiml.toString()); }
+async function queueScreenPop(callSid) {
+  if (db.enabled) await enqueueJob('screenPop', `screenpop:${callSid}`, { callSid }, { refresh: true });
+  else runTracked('screenPop', { callSid }, () => doScreenPop(callSid));
+}
+async function recordDisclosure(sid) {
+  if (!db.enabled || (!config.voice.recordingEnabled && !config.coachingEnabled && !config.recapEnabled)) return;
+  await db.query(`INSERT INTO consent_events(call_sid,kind,state,method)
+    SELECT $1,'disclosure','disclosed','ivr_disclosure'
+    WHERE NOT EXISTS(SELECT 1 FROM consent_events WHERE call_sid=$1 AND kind='disclosure')`, [sid]);
+  await db.query("UPDATE calls SET consent_state='disclosed',consent_at=coalesce(consent_at,now()) WHERE twilio_call_sid=$1", [sid]);
+}
+export function validDestination(raw) {
+  if (typeof raw !== 'string' || !/^[+\d\s().-]+$/.test(raw)) return null;
+  const n = normalizePhone(raw);
+  return /^\+[1-9]\d{7,14}$/.test(n) && config.voice.allowedPrefixes.some(prefix => n.startsWith(prefix)) ? n : null;
+}
+export function voicemail(twiml) {
+  twiml.say('Sorry we missed you. Please leave your name, callback number, and message after the tone.');
+  twiml.record({ maxLength: 120, playBeep: true, transcribe: false,
+    recordingStatusCallback: webhookUrl('/recording/status?kind=voicemail'), recordingStatusCallbackEvent: 'completed absent',
+    action: webhookUrl('/voice/voicemail-done'), method: 'POST' });
+  twiml.hangup();
 }
 
-/**
- * OUTBOUND — the TwiML App's Voice URL points here.
- * The browser SDK calls device.connect({ params: { To } }); Twilio POSTs
- * that here, and we bridge to the dialed PSTN number.
- */
-voiceRouter.post("/voice/outbound", async (req, res) => {
-  const to = (req.body.To || "").trim();
-  const callSid = req.body.CallSid;
+voiceRouter.post('/voice/outbound', asyncRoute(async (req, res) => {
   const twiml = new VoiceResponse();
-
-  if (!to) {
-    twiml.say("No destination number was provided. Goodbye.");
-    return res.type("text/xml").send(twiml.toString());
+  const to = validDestination(req.body.To);
+  const identity = identityFromClient(req.body.From);
+  const allowed = config.auth.agents.some(a => a.identity === identity && a.role !== 'viewer');
+  if (!to || !identity || (config.auth.required && !allowed)) {
+    twiml.say('This destination or calling account is not enabled.'); twiml.hangup();
+    return sendXml(res, twiml);
   }
-
-  // The browser SDK call arrives with From = "client:<identity>".
-  const identity = identityFromClient(req.body.From) || config.defaultAgentIdentity;
-  startSession(callSid, {
-    identity,
-    customerNumber: to,
-    direction: "outbound",
-    from: config.twilio.callerId,
-    to,
-  });
-
-  maybeStartTranscription(twiml);
-
-  const dial = twiml.dial({
-    callerId: config.twilio.callerId,
-    answerOnBridge: true,
-    record: "record-from-answer-dual",
-    recordingStatusCallback: webhookUrl("/recording/status"),
-    recordingStatusCallbackEvent: "completed",
-  });
-  dial.number(
-    {
-      statusCallback: webhookUrl("/voice/status"),
-      statusCallbackEvent: STATUS_EVENTS,
-      statusCallbackMethod: "POST",
-    },
-    to
-  );
-
-  await recordCall({
-    callSid,
-    direction: "outbound",
-    from: config.twilio.callerId,
-    to,
-    status: "queued",
-  });
-
-  res.type("text/xml").send(twiml.toString());
-
-  // Pop the customer's CRM record onto the agent's screen (best-effort, tracked).
-  runTracked("screenPop", { callSid }, () => doScreenPop(callSid));
-});
-
-/**
- * INBOUND — set a WIT Twilio number's Voice webhook to this URL.
- * Starter routing: ring the default agent's browser client; if unanswered,
- * fall through to /voice/dial-status for voicemail.
- */
-voiceRouter.post("/voice/inbound", async (req, res) => {
-  const from = req.body.From;
-  const to = req.body.To;
   const callSid = req.body.CallSid;
-  const twiml = new VoiceResponse();
-
-  // Recording + AI transcription are active — disclose for two-party-consent states.
-  twiml.say(
-    { voice: "Polly.Joanna" },
-    "Thank you for calling We Insure Things. This call may be recorded and transcribed for quality and training. Connecting you to an agent."
-  );
-
-  startSession(callSid, {
-    identity: config.defaultAgentIdentity,
-    customerNumber: from,
-    direction: "inbound",
-    from,
-    to,
-  });
-
+  await createCall({ callSid, direction: 'outbound', from: config.twilio.callerId, to, identity });
+  startSession(callSid, { identity, customerNumber: to, direction: 'outbound', from: config.twilio.callerId, to });
   maybeStartTranscription(twiml);
+  const dial = twiml.dial({ callerId: config.twilio.callerId, answerOnBridge: true,
+    action: webhookUrl('/voice/outbound-done'), method: 'POST', ...recordingOptions() });
+  dial.number({ statusCallback: statusUrl(callSid), statusCallbackEvent: STATUS_EVENTS, statusCallbackMethod: 'POST',
+    // Runs on the called party after answer, before the bridge opens.
+    url: webhookUrl(`/voice/disclosure?parent=${encodeURIComponent(callSid)}`), method: 'POST' }, to);
+  await queueScreenPop(callSid);
+  sendXml(res, twiml);
+}));
 
-  const dial = twiml.dial({
-    callerId: from, // show the customer's number to the agent
-    timeout: 20,
-    action: webhookUrl("/voice/dial-status"),
-    method: "POST",
-    record: "record-from-answer-dual",
-    recordingStatusCallback: webhookUrl("/recording/status"),
-    recordingStatusCallbackEvent: "completed",
-  });
-  // TODO(prod): resolve target from routing_rules + ring_groups in the DB.
-  dial.client(
-    {
-      statusCallback: webhookUrl("/voice/status"),
-      statusCallbackEvent: STATUS_EVENTS,
-      statusCallbackMethod: "POST",
-    },
-    config.defaultAgentIdentity
-  );
-
-  await recordCall({
-    callSid,
-    direction: "inbound",
-    from,
-    to,
-    status: "ringing",
-  });
-
-  res.type("text/xml").send(twiml.toString());
-
-  // Screen-pop resolves the contact, creates the call row, AND records the
-  // recording/transcription disclosure for two-party consent (best-effort, tracked).
-  runTracked("screenPop", { callSid }, () => doScreenPop(callSid));
-});
-
-/**
- * DIAL ACTION — Twilio hits this after a <Dial> finishes. If the agent
- * didn't pick up, take a voicemail (which fires the recording callback).
- */
-voiceRouter.post("/voice/dial-status", (req, res) => {
-  const dialStatus = req.body.DialCallStatus; // completed | answered | no-answer | busy | failed | canceled
+voiceRouter.post('/voice/disclosure', asyncRoute(async (req, res) => {
   const twiml = new VoiceResponse();
+  if (config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled) twiml.say(DISCLOSURE);
+  await recordDisclosure(req.query.parent || req.body.ParentCallSid || req.body.CallSid);
+  sendXml(res, twiml);
+}));
 
-  if (dialStatus !== "completed" && dialStatus !== "answered") {
-    twiml.say(
-      { voice: "Polly.Joanna" },
-      "Sorry we missed you. Please leave a message after the tone."
-    );
-    twiml.record({
-      maxLength: 120,
-      playBeep: true,
-      transcribe: false, // production transcription handled by the AI pipeline
-      recordingStatusCallback: webhookUrl("/recording/status"),
-      recordingStatusCallbackEvent: "completed",
-      action: webhookUrl("/voice/voicemail-done"),
+voiceRouter.post('/voice/inbound', asyncRoute(async (req, res) => {
+  const { CallSid: callSid, From: from, To: to } = req.body;
+  const twiml = new VoiceResponse();
+  const route = await selectTargets(callSid);
+  await createCall({ callSid, direction: 'inbound', from, to,
+    identity: route.targets.length === 1 ? route.targets[0] : null, targets: route.targets });
+  startSession(callSid, { identity: route.targets.length === 1 ? route.targets[0] : null,
+    customerNumber: from, direction: 'inbound', from, to });
+  twiml.say(`Thank you for calling We Insure Things. ${config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled ? DISCLOSURE : ''}`);
+  maybeStartTranscription(twiml);
+  if (route.targets.length) {
+    const dial = twiml.dial({ callerId: from, timeout: route.timeout, answerOnBridge: true,
+      action: webhookUrl('/voice/dial-status'), method: 'POST', ...recordingOptions() });
+    for (const identity of route.targets) {
+      const target = dial.client({ statusCallback: statusUrl(callSid, identity), statusCallbackEvent: STATUS_EVENTS, statusCallbackMethod: 'POST' });
+      target.identity(identity);
+      target.parameter({ name: 'rootCallSid', value: callSid });
+    }
+  } else voicemail(twiml);
+  if (db.enabled) {
+    await db.query(`UPDATE calls SET is_voicemail=$2,consent_state=$3,consent_at=now() WHERE twilio_call_sid=$1`,
+      [callSid, !route.targets.length, config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled ? 'disclosed' : 'unknown']);
+  }
+  await recordDisclosure(callSid);
+  await queueScreenPop(callSid);
+  sendXml(res, twiml);
+}));
+
+voiceRouter.post('/voice/dial-status', asyncRoute(async (req, res) => {
+  const twiml = new VoiceResponse();
+  const call = await loadCall(req.body.CallSid);
+  // A redirected call (transfer) must not execute the original Dial's fallback.
+  if (call?.disposition === 'transferring') return sendXml(res, twiml);
+  if (req.body.DialCallStatus === 'completed' || req.body.DialCallStatus === 'answered') {
+    await applyStatus({ CallSid: req.body.CallSid, CallStatus: 'completed', CallDuration: req.body.DialCallDuration }, { terminal: true });
+  } else {
+    if (db.enabled) await db.query('UPDATE calls SET is_voicemail=true WHERE twilio_call_sid=$1', [req.body.CallSid]);
+    voicemail(twiml);
+  }
+  sendXml(res, twiml);
+}));
+
+voiceRouter.post('/voice/outbound-done', asyncRoute(async (req, res) => {
+  await applyStatus({ CallSid: req.body.CallSid, CallStatus: req.body.DialCallStatus || 'completed', CallDuration: req.body.DialCallDuration });
+  sendXml(res, new VoiceResponse());
+}));
+voiceRouter.post('/voice/transfer-result', asyncRoute(async (req, res) => {
+  const xml = new VoiceResponse();
+  if (req.body.DialCallStatus === 'completed') {
+    await db.query("UPDATE calls SET disposition='transferred' WHERE twilio_call_sid=$1", [req.body.CallSid]);
+    await applyStatus({ CallSid: req.body.CallSid, CallStatus: 'completed', CallDuration: req.body.DialCallDuration }, { terminal: true });
+  } else {
+    await db.query("UPDATE calls SET disposition='transfer_unanswered',is_voicemail=true WHERE twilio_call_sid=$1", [req.body.CallSid]);
+    voicemail(xml);
+  }
+  sendXml(res, xml);
+}));
+voiceRouter.post('/voice/voicemail-done', asyncRoute(async (req, res) => {
+  await applyStatus({ CallSid: req.body.CallSid, CallStatus: 'completed' });
+  sendXml(res, new VoiceResponse());
+}));
+
+voiceRouter.post('/voice/status', asyncRoute(async (req, res) => {
+  const call = await applyStatus(req.body, { parentSid: req.query.parent, agentIdentity: req.query.agent });
+  if (call?.agent_identity) {
+    const session = await restoreSession(call.twilio_call_sid);
+    if (session) session.identity = call.agent_identity;
+    publishToAgent(call.agent_identity, 'call_status', { callSid: call.twilio_call_sid, status: call.status });
+    if (req.body.CallStatus === 'in-progress') await queueScreenPop(call.twilio_call_sid);
+  }
+  res.sendStatus(204);
+}));
+
+voiceRouter.post('/voice/transcription', asyncRoute(async (req, res) => {
+  const body = req.body;
+  const callSid = body.CallSid;
+  if (body.TranscriptionEvent === 'transcription-content') {
+    let data;
+    try { data = JSON.parse(body.TranscriptionData || '{}'); }
+    catch { return res.status(400).json({ error: 'Invalid transcription data' }); }
+    if (body.Final === 'false' || data.is_final === false) return res.sendStatus(204);
+    const text = typeof data.transcript === 'string' ? data.transcript.trim() : '';
+    if (text) {
+      const call = await loadCall(callSid);
+      const session = getSession(callSid);
+      if (db.enabled) {
+        const result = await persistUtterance(body, resolveSpeaker(call?.direction || session?.direction, body.Track), text);
+        if (!result.inserted) return res.sendStatus(204);
+      }
+      runTracked('onUtterance', { callSid, track: body.Track, transcript: text }, () => onUtterance(callSid, body.Track, text));
+    }
+  } else if (body.TranscriptionEvent === 'transcription-stopped' && db.enabled) {
+    // Stop can precede hangup (including an explicit Stop verb). Do not invent
+    // a completed lifecycle here; use root status / Dial action for that.
+    await db.transaction(async tx => {
+      await tx.query('UPDATE calls SET transcript_stopped_at=now() WHERE twilio_call_sid=$1', [callSid]);
+      await enqueueJob('recap', `recap:${callSid}`, { callSid }, { delayMs: 1500, refresh: true, connection: tx });
     });
-    twiml.say({ voice: "Polly.Joanna" }, "We did not receive a recording. Goodbye.");
+  } else if (body.TranscriptionEvent === 'transcription-error' && db.enabled) {
+    await db.query("UPDATE calls SET recap_state='transcription_error' WHERE twilio_call_sid=$1", [callSid]);
   }
-  // If completed or answered, an empty response ends the call cleanly.
-  res.type("text/xml").send(twiml.toString());
-});
-
-// Terminal URL for <Record action> — prevents Twilio re-posting to /voice/dial-status after voicemail.
-voiceRouter.post("/voice/voicemail-done", (req, res) => {
-  res.type("text/xml").send(new VoiceResponse().toString());
-});
-
-/**
- * STATUS CALLBACK — per-leg lifecycle events. Updates the calls row.
- */
-voiceRouter.post("/voice/status", async (req, res) => {
-  await updateCallStatus({
-    callSid: req.body.CallSid,
-    status: req.body.CallStatus,
-    durationSec: req.body.CallDuration ? Number(req.body.CallDuration) : null,
-  });
   res.sendStatus(204);
-});
-
-/**
- * REAL-TIME TRANSCRIPTION — Twilio POSTs here as <Start><Transcription>
- * produces finalized utterances, and once more when transcription stops.
- *   transcription-content → buffer the utterance + run (throttled) coaching
- *   transcription-stopped → call ended → generate recap + write to CRM
- * Respond fast; AI work runs fire-and-forget so we never delay Twilio.
- */
-voiceRouter.post("/voice/transcription", (req, res) => {
-  const event = req.body.TranscriptionEvent;
-  const callSid = req.body.CallSid;
-
-  if (event === "transcription-content") {
-    let transcript = "";
-    try {
-      transcript = JSON.parse(req.body.TranscriptionData || "{}").transcript || "";
-    } catch {
-      transcript = "";
-    }
-    if (transcript) {
-      runTracked("onUtterance", { callSid, track: req.body.Track, transcript }, () =>
-        onUtterance(callSid, req.body.Track, transcript)
-      );
-    }
-  } else if (event === "transcription-stopped") {
-    runTracked("onCallComplete", { callSid }, () => onCallComplete(callSid));
-  }
-
-  res.sendStatus(204);
-});
+}));

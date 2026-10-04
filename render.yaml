@@ -1,31 +1,70 @@
-# Render Blueprint — TEST configuration to unblock the agent workspace.
-#
-# Auth is BYPASSED here (AUTH_REQUIRED=false) so you can reach /agent.html
-# without Google/2FA. This is for testing only — do NOT ship to production
-# like this. For real auth, set AUTH_REQUIRED=true and configure Google +
-# Twilio Verify (see README → Authentication).
-#
-# Voice/messaging/CRM/AI features stay disabled until you add their vars in the
-# Render dashboard (Twilio, ERPNext, AI provider). The app still serves the UI.
+# WiT Connect: authenticated Render deployment.
+# Existing service: voip-1, Node runtime, Virginia. See docs/render-deployment.md.
+# Preserve/verify its existing DATABASE_URL before attaching any new database.
 services:
   - type: web
-    name: agent-workspace
-    env: node
+    name: voip-1
+    runtime: node
+    repo: https://github.com/Yothisislogan/voip
+    branch: main
+    region: virginia
+    # Retain the existing free plan for setup. Approve always-on compute before
+    # routing real calls; free services can sleep and are not a phone-service SLA.
     plan: free
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /health
+    numInstances: 1
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci --omit=dev
+    startCommand: npm run start:render
+    healthCheckPath: /ready
+    maxShutdownDelaySeconds: 30
     envVars:
-      # --- Testing access (remove/flip before production) ---
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
       - key: AUTH_REQUIRED
-        value: "false"
-      - key: DEV_LOGIN_ENABLED
         value: "true"
-      - key: SESSION_SECRET
-        generateValue: true
-      # Render injects the service hostname; the app upgrades it to https://.
+      - key: DEV_LOGIN_ENABLED
+        value: "false"
+      - key: CSRF_ENABLED
+        value: "true"
       - key: PUBLIC_BASE_URL
-        fromService:
-          type: web
-          name: agent-workspace
-          property: host
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      # Keep the existing session secret on an existing service. Generate a new
+      # long random value only if none has been configured; never commit it.
+      - key: SESSION_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: AGENT_DIRECTORY
+        sync: false
+      - key: DEFAULT_AGENT_IDENTITY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_API_KEY_SID
+        sync: false
+      - key: TWILIO_API_KEY_SECRET
+        sync: false
+      - key: TWILIO_TWIML_APP_SID
+        sync: false
+      - key: TWILIO_CALLER_ID
+        sync: false
+      - key: TWILIO_VERIFY_SERVICE_SID
+        sync: false
+      - key: EMAIL_INBOUND_TOKEN
+        sync: false
+      - key: WITNEXT_URL
+        sync: false
+      - key: WITNEXT_INTEGRATION_ID
+        sync: false
+      - key: WITNEXT_INTEGRATION_SECRET
+        sync: false
+      - key: LEAD_SIGNAL_TOKEN
+        sync: false

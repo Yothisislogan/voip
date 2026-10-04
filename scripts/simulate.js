@@ -140,7 +140,11 @@ async function run() {
     TranscriptionEvent: "transcription-stopped",
   });
   check("stop accepted (204)", stopped.status === 204, `status ${stopped.status}`);
-  await sleep(1500); // recap→score→extract→completeCall pipeline
+  for (let i = 0; i < 60; i++) {
+    const current = await getJson(`/api/crm/calls/${encodeURIComponent(CALL_SID)}`);
+    if (current.call?.recap_state === 'ready') break;
+    await sleep(250);
+  } // durable worker settles asynchronously
 
   // ── 4. Verify persistence via the authenticated CRM API ──
   console.log("4) verify via CRM API");

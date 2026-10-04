@@ -3,6 +3,8 @@ import { config } from "../config.js";
 import { parseInboundEmail, handleInboundEmail } from "../intake/email.js";
 import { emitWitnextEvent } from "../integrations/witnext.js";
 import { recordFailedJob } from "../jobs/deadletter.js";
+import { db } from '../db.js';
+import { enqueueJob } from '../jobs/queue.js';
 
 /**
  * POST /email/inbound — inbound-parse webhook (SendGrid / Mailgun). Parses the
@@ -30,18 +32,23 @@ emailRouter.post("/email/inbound", async (req, res) => {
 
     // Broker: forward the normalized (never raw) lead to WiTNext intake review.
     // Gmail/message id rides along for receiver-side idempotency.
-    emitWitnextEvent(
+    await emitWitnextEvent(
       "email.lead_received",
       {
         source: "email",
         message_id: parsed.messageId || null,
-        from_name: parsed.fromName || null,
-        from_email: parsed.fromEmail || null,
+        from_name: result.fromName || null,
+        from_email: result.fromEmail || null,
         subject: parsed.subject || null,
         extracted: result?.fields || null,
       },
       { recordFailedJob }
     );
+    if (db.enabled) {
+      const pending = await db.query(`SELECT twilio_call_sid FROM calls WHERE source_number IS NOT NULL
+        AND identity_state<>'matched' AND created_at>now()-interval '30 minutes'`);
+      for (const row of pending.rows) await enqueueJob('screenPop', `match:${row.twilio_call_sid}`, { callSid: row.twilio_call_sid }, { refresh: true });
+    }
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error("email intake failed:", err.message);

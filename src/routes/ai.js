@@ -6,6 +6,7 @@ import { generateCoaching } from "../ai/coach.js";
 import { generateRecap } from "../ai/recap.js";
 import { generateAutomation, automationEnabled, AUTOMATION_KINDS } from "../ai/automation.js";
 import * as crm from "../store/crm.js";
+import { canAccessCall } from '../auth/call-access.js';
 
 export const aiRouter = Router();
 
@@ -15,7 +16,7 @@ export const aiRouter = Router();
  * Body:
  *   { "transcript": "Agent: ...\nCustomer: ...", "recap": false }
  */
-aiRouter.post("/ai/test-coaching", requireAuth, async (req, res) => {
+aiRouter.post("/ai/test-coaching", requireAuth, requireRole('agent'), csrfProtect, async (req, res) => {
   const transcript = String(req.body?.transcript || "").trim();
   if (!transcript) return res.status(400).json({ error: "transcript is required" });
 
@@ -42,7 +43,7 @@ aiRouter.post("/ai/automate", requireAuth, requireRole("agent"), csrfProtect, as
   if (!crm.crmDbEnabled) return res.status(503).json({ error: "CRM database not configured" });
 
   const detail = await crm.getCallDetail(callSid);
-  if (!detail || !detail.call) return res.status(404).json({ error: "call not found" });
+  if (!detail || !detail.call || !canAccessCall(req.agent, detail.call)) return res.status(404).json({ error: "call not found" });
 
   const transcript = (detail.segments || [])
     .map((s) => `${s.speaker === "agent" ? "Agent" : "Customer"}: ${s.text}`)

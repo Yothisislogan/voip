@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { validateRouting } from './services/routing.js';
 
 /**
  * Fail-fast configuration validation. In production (NODE_ENV=production) a fatal
@@ -12,6 +13,11 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   const isProd = process.env.NODE_ENV === "production";
   const fatal = [];
   const warn = [];
+  fatal.push(...validateRouting(config.voice.routing));
+  if (isProd && !config.databaseUrl) fatal.push('DATABASE_URL is required for durable call records and delivery.');
+  if (isProd && !process.env.TWILIO_AUTH_TOKEN) fatal.push('TWILIO_AUTH_TOKEN is required to authenticate provider webhooks.');
+  if (config.witnext.enabled && !config.witnext.integrationId) fatal.push('WITNEXT_INTEGRATION_ID is required by the WiTnext receiver.');
+  if (isProd && config.emailIntake.enabled && !config.emailIntake.token) fatal.push('EMAIL_INBOUND_TOKEN is required when email intake is enabled.');
 
   // ── Security-critical (fatal in production) ──
   if (!config.auth.required) {
@@ -26,7 +32,7 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   if (!config.publicBaseUrl) {
     fatal.push("PUBLIC_BASE_URL is required in production (webhooks + Secure cookies).");
   } else if (!config.publicBaseUrl.startsWith("https://")) {
-    warn.push("PUBLIC_BASE_URL is not https:// — session cookies won't be marked Secure.");
+    fatal.push("PUBLIC_BASE_URL must use https:// in production.");
   }
 
   // Auth must actually be usable: Google client + at least one agent.

@@ -1,225 +1,147 @@
-import { config } from "../config.js";
-import { transcripts } from "../ai/transcript.js";
-import { generateCoaching } from "../ai/coach.js";
-import { generateRecap, formatRecapNote } from "../ai/recap.js";
-import { scoreCall } from "../ai/score.js";
-import { extractLeadFields } from "../ai/extract.js";
-import { extractLeadFieldsAI, mergeAiExtraction } from "../ai/extract-ai.js";
-import * as crm from "../store/crm.js";
-import * as erpnext from "../crm/erpnext.js";
-import { recordDisclosure } from "../store/consent.js";
-import { witnextEnabled, emitWitnextEvent } from "../integrations/witnext.js";
-import { recordFailedJob } from "../jobs/deadletter.js";
-import { maybeSendSurvey } from "./survey.js";
-import { getSession, setContact, endSession } from "./sessions.js";
-import { publishToAgent } from "./bus.js";
+import { createHash } from 'node:crypto';
+import { config } from '../config.js';
+import { db } from '../db.js';
+import { transcripts } from '../ai/transcript.js';
+import { generateCoaching } from '../ai/coach.js';
+import { generateRecap } from '../ai/recap.js';
+import { scoreCall } from '../ai/score.js';
+import { extractLeadFields } from '../ai/extract.js';
+import { extractLeadFieldsAI, mergeAiExtraction } from '../ai/extract-ai.js';
+import * as crm from '../store/crm.js';
+import * as erpnext from '../crm/erpnext.js';
+import { emitWitnextEvent } from '../integrations/witnext.js';
+import { getSession, setContact, endSession, startSession } from './sessions.js';
+import { publishToAgent } from './bus.js';
+import { callPayload, isSharedNumber, loadCall } from '../services/call-state.js';
+import { schedulePostCall } from '../services/post-call.js';
+import { matchCallLead } from '../services/lead-matching.js';
 
-/**
- * Glue between Twilio events, the AI services, and the agent's screen.
- * Everything here is best-effort and self-contained: a failure must never
- * disrupt the live call.
- */
-
-/**
- * Map a Twilio transcription track to a speaker, given the call direction.
- *  - inbound:  caller is the customer  → inbound_track = customer
- *  - outbound: caller is the agent     → inbound_track = agent
- */
 export function resolveSpeaker(direction, track) {
-  const callerIsAgent = direction === "outbound";
-  if (track === "inbound_track") return callerIsAgent ? "agent" : "customer";
-  if (track === "outbound_track") return callerIsAgent ? "customer" : "agent";
-  return "customer"; // sensible default
+  const callerIsAgent = direction === 'outbound';
+  if (track === 'inbound_track') return callerIsAgent ? 'agent' : 'customer';
+  if (track === 'outbound_track') return callerIsAgent ? 'customer' : 'agent';
+  return 'customer';
 }
 
-/**
- * Screen-pop: match/create the caller in the Postgres CRM (primary), falling
- * back to ERPNext when Postgres isn't configured, and push the record to the
- * agent. Safe to call fire-and-forget after responding to a webhook.
- */
-export async function doScreenPop(callSid) {
-  const session = getSession(callSid);
-  if (!session?.identity || !session.customerNumber) return;
+export async function restoreSession(callSid) {
+  let session = getSession(callSid);
+  if (session) return session;
+  const call = await loadCall(callSid);
+  if (!call) return null;
+  startSession(callSid, { identity: call.agent_identity, customerNumber: call.customer_number,
+    direction: call.direction, from: call.from_e164, to: call.to_e164 });
+  session = getSession(callSid);
+  session.contactId = call.contact_id;
+  session.startedAt = new Date(call.created_at).getTime();
+  return session;
+}
 
+export async function doScreenPop(callSid) {
+  let call = await loadCall(callSid);
+  const session = await restoreSession(callSid);
+  if (!session) return;
+  if (call?.source_number) {
+    await matchCallLead(callSid);
+    call = await loadCall(callSid);
+    session.customerNumber = call.customer_number;
+    session.contactId = call.contact_id;
+  }
   let contact = null;
-  if (crm.crmDbEnabled) {
-    const row = await crm.findOrCreateContactByPhone(session.customerNumber, {
-      source: session.direction === "outbound" ? "call_outbound" : "call_inbound",
-    });
-    if (row) {
+  const number = call?.customer_number || session.customerNumber;
+  if (number && !isSharedNumber(number)) {
+    if (db.enabled) {
+      const row = await crm.findOrCreateContactByPhone(number, { source: session.direction === 'outbound' ? 'call_outbound' : 'call_inbound' });
+      if (!row) throw new Error('Contact lookup failed');
       session.contactId = row.id;
       contact = crm.shapeContactForUi(row);
-      await crm.recordCall({
-        callSid,
-        contactId: row.id,
-        direction: session.direction,
-        from: session.from,
-        to: session.to,
-        status: "in_progress",
-      });
-      // Record the recording/transcription disclosure now that the call row
-      // exists (inbound plays the IVR disclosure at answer time).
-      if (session.direction === "inbound") {
-        await recordDisclosure(callSid, row.id);
-      }
-    }
-  } else {
-    contact = await erpnext.findContactByPhone(session.customerNumber);
+      await db.query('UPDATE calls SET contact_id=$2 WHERE twilio_call_sid=$1', [callSid, row.id]);
+    } else contact = await erpnext.findContactByPhone(number);
   }
-
   setContact(callSid, contact);
-  publishToAgent(session.identity, "screenpop", {
-    callSid,
-    phone: session.customerNumber,
-    contact, // null if not found / CRM disabled — UI shows "new caller"
+  const identities = call?.agent_identity ? [call.agent_identity] : call?.route_targets || [session.identity];
+  for (const identity of identities.filter(Boolean)) publishToAgent(identity, 'screenpop', {
+    callSid, phone: number, contact, sourceNumber: call?.source_number,
+    identityState: call?.identity_state, identityEvidence: call?.identity_evidence,
   });
 }
 
-/**
- * Handle one finalized transcription utterance: buffer it, then (throttled)
- * run a coaching pass and push cues to the agent.
- */
+// Persistence occurs in the webhook before acknowledgement. Live coaching is
+// optional; failure must not erase a successfully stored utterance.
 export async function onUtterance(callSid, track, text, at = Date.now()) {
-  const session = getSession(callSid);
+  const session = await restoreSession(callSid);
   if (!session) return;
-
   const speaker = resolveSpeaker(session.direction, track);
   transcripts.append(callSid, speaker, text, at);
-
-  // Persist the utterance (best-effort) so transcripts survive process restarts.
-  crm.insertTranscriptSegment({
-    callSid,
-    contactId: session.contactId,
-    seq: session.segSeq++,
-    speaker,
-    text,
-  }).catch(() => {});
-
-  if (!config.coachingEnabled) return;
-
-  // Throttle coaching calls per-call to bound latency/cost on a chatty line.
-  if (at - session.throttledAt < config.coachingThrottleMs) return;
+  if (session.identity) publishToAgent(session.identity, 'transcript', { callSid, speaker, text });
+  if (!config.coachingEnabled || at - session.throttledAt < config.coachingThrottleMs) return;
   session.throttledAt = at;
-
-  const recent = transcripts.formatRecent(callSid);
-  const coaching = await generateCoaching(recent);
-  if (!coaching) return;
-
-  publishToAgent(session.identity, "coaching", { callSid, ...coaching });
+  const coaching = await generateCoaching(transcripts.formatRecent(callSid));
+  if (coaching && session.identity) publishToAgent(session.identity, 'coaching', { callSid, ...coaching });
 }
 
-/**
- * Call completed: generate the recap, write it to the customer's CRM record,
- * notify the agent, and clean up buffers.
- */
-export async function onCallComplete(callSid, durationSec) {
-  const session = getSession(callSid);
+// A replayable DB job: no dependence on the original server's memory. Late
+// segments refresh the job and change the fingerprint, generating a new recap.
+export async function onCallComplete(callSid) {
+  const call = await loadCall(callSid);
+  if (!call) throw new Error('Call not found for recap');
+  const segments = (await db.query(`SELECT speaker,text FROM transcript_segments WHERE call_sid=$1
+    ORDER BY spoken_at,seq`, [callSid])).rows;
+  const full = segments.map(s => `${s.speaker === 'agent' ? 'Agent' : 'Customer'}: ${s.text}`).join('\n');
+  if (!full) {
+    await db.query("UPDATE calls SET recap_state='no_transcript' WHERE twilio_call_sid=$1", [callSid]);
+    if (call.ended_at) { transcripts.clear(callSid); endSession(callSid); }
+    return;
+  }
+  const fingerprint = createHash('sha256').update(JSON.stringify([full, call.contact_id, call.customer_number])).digest('hex');
+  // Transcripts and lifecycle travel independently of AI availability.
+  await emitWitnextEvent('call.transcript_available', { ...callPayload(call), transcript: full });
+  if (!config.recapEnabled) {
+    await db.query("UPDATE calls SET recap_state='disabled' WHERE twilio_call_sid=$1", [callSid]);
+    if (call.ended_at) { transcripts.clear(callSid); endSession(callSid); }
+    return;
+  }
+  if (call.recap_fingerprint === fingerprint && call.recap_state === 'ready') {
+    await schedulePostCall(call);
+    return;
+  }
+  await db.query("UPDATE calls SET recap_state='processing' WHERE twilio_call_sid=$1", [callSid]);
   try {
-    if (!session || !config.recapEnabled || !transcripts.has(callSid)) return;
-
-    if (durationSec == null && session.startedAt) {
-      durationSec = Math.round((Date.now() - session.startedAt) / 1000);
-    }
-
-    const full = transcripts.format(callSid);
     const recap = await generateRecap(full);
-    if (!recap) return;
-
-    // Score the call and persist it (Postgres).
+    if (!recap) throw new Error('Recap provider returned no result');
     const scored = scoreCall({ recap, transcript: full });
-    await crm.insertCallScore({
-      callSid,
-      contactId: session.contactId,
-      score: scored.score,
-      sentiment: scored.sentiment,
-      outcome: scored.outcome,
-      factors: scored.factors,
-      summary: scored.summary,
-    });
-
-    // Extract lead fields. Deterministic regex extraction is the guaranteed
-    // baseline (auto-applied); the LLM extractor (Groq 70B) adds high-confidence
-    // fields and proposes the rest for the agent to confirm ("Apply?").
     let proposedUpdates = [];
-    if (session.contactId) {
+    if (call.contact_id) {
       const fields = extractLeadFields(full, recap);
-
       const aiResult = await extractLeadFieldsAI(full).catch(() => null);
       const { applied, proposed, nextAction } = mergeAiExtraction(aiResult);
       proposedUpdates = proposed;
-      if (nextAction) recap.nextSteps = dedupePrepend(recap.nextSteps, nextAction);
-
-      // Deterministic fields first, then overlay high-confidence AI fields.
+      if (nextAction) recap.nextSteps = [...new Set([nextAction, ...(recap.nextSteps || [])])];
       const merged = { ...fields, ...applied };
-      if (Object.keys(merged).length) await crm.updateContactFields(session.contactId, merged);
-    }
-
-    await crm.completeCall({ callSid, durationSeconds: durationSec, recap });
-
-    // Optional ERPNext mirror (independent lookup; PG ids don't map to ERPNext).
-    let mirroredToErp = false;
-    if (erpnext.crmEnabled) {
-      const note = formatRecapNote(recap, { from: session.from, to: session.to, durationSec });
-      const erpContact = await erpnext.findContactByPhone(session.customerNumber);
-      if (note) {
-        const noteId = await erpnext.writeRecapNote({ contact: erpContact, subject: note.subject, description: note.description });
-        await erpnext.logCallActivity({ contact: erpContact, callSid, from: session.from, to: session.to, durationSec, direction: session.direction });
-        mirroredToErp = Boolean(noteId);
+      if (Object.keys(merged).length) {
+        const updated = await crm.updateContactFields(call.contact_id, merged);
+        if (!updated) throw new Error('Could not persist extracted contact fields');
       }
     }
-
-    // Post-call survey SMS (best-effort; no-op if messaging/DB disabled).
-    maybeSendSurvey({ callSid, session }).catch(() => {});
-
-    // Forward normalized events to the WiTNext CRM (broker role). Failures
-    // land in the DLQ and retry with the SAME event_id, so WiTNext dedupes.
-    if (witnextEnabled()) {
-      const occurredAt = new Date().toISOString();
-      const callBase = {
-        source: "twilio",
-        call_id: callSid,
-        direction: session.direction,
-        external_number: session.customerNumber,
-        from: session.from,
-        to: session.to,
-        agent_identity: session.identity || null,
-        duration_seconds: durationSec ?? null,
-      };
-      emitWitnextEvent("call.completed", callBase, { occurredAt, recordFailedJob });
-      emitWitnextEvent(
-        "call.recap_available",
-        { ...callBase, recap, score: scored, proposed_updates: proposedUpdates },
-        { occurredAt, recordFailedJob }
-      );
-      emitWitnextEvent(
-        "call.transcript_available",
-        { ...callBase, transcript: full },
-        { occurredAt, recordFailedJob }
-      );
-    }
-
-    if (session.identity) {
-      publishToAgent(session.identity, "recap", {
-        callSid,
-        recap,
-        score: scored,
-        contact: session.contact,
-        contactId: session.contactId || null,
-        proposedUpdates, // low-confidence AI fields for "AI found these updates. Apply?"
-        savedToCrm: crm.crmDbEnabled || mirroredToErp,
-      });
-    }
-  } catch (err) {
-    console.error("onCallComplete failed:", err.message);
-  } finally {
+    // Save recap, score and outbound event in one transaction. A crash before
+    // commit retries all three; one after commit finds the same fingerprint.
+    await db.transaction(async tx => {
+      await tx.query(`INSERT INTO call_scores(call_sid,contact_id,score,sentiment,outcome,factors,summary)
+        VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(call_sid) DO UPDATE SET
+        score=EXCLUDED.score,sentiment=EXCLUDED.sentiment,outcome=EXCLUDED.outcome,factors=EXCLUDED.factors,summary=EXCLUDED.summary`,
+      [callSid, call.contact_id, scored.score, scored.sentiment, scored.outcome, JSON.stringify(scored.factors), scored.summary]);
+      await tx.query(`UPDATE calls SET recap=$2,recap_state='ready',recap_fingerprint=$3,updated_at=now()
+        WHERE twilio_call_sid=$1`, [callSid, JSON.stringify(recap), fingerprint]);
+      await schedulePostCall(call, tx);
+      await emitWitnextEvent('call.recap_available', { ...callPayload(call), recap, score: scored, proposed_updates: proposedUpdates }, { connection: tx });
+    });
+    if (call.agent_identity) publishToAgent(call.agent_identity, 'recap', {
+      callSid, recap, score: scored, contactId: call.contact_id, proposedUpdates, savedToCrm: true,
+    });
     transcripts.clear(callSid);
     endSession(callSid);
+  } catch (error) {
+    await db.query("UPDATE calls SET recap_state='failed' WHERE twilio_call_sid=$1", [callSid]);
+    if (call.ended_at) { transcripts.clear(callSid); endSession(callSid); }
+    throw error;
   }
-}
-
-// Prepend a next step from AI extraction without duplicating an existing one.
-function dedupePrepend(list, item) {
-  const arr = Array.isArray(list) ? list : [];
-  if (arr.some((x) => String(x).trim().toLowerCase() === item.trim().toLowerCase())) return arr;
-  return [item, ...arr];
 }

@@ -48,7 +48,7 @@ const mock = http.createServer((req, res) => {
       return res.writeHead(403).end();
     }
     const id = req.headers["x-wit-event-id"];
-    if (seen.has(id)) return res.writeHead(409).end(); // idempotent duplicate
+    if (seen.has(id)) return res.writeHead(200).end(); // idempotent duplicate
     seen.add(id);
     const env = JSON.parse(raw);
     got.push({ type: env.event_type, path: req.url, callId: env.payload.call_id, verified: true });
@@ -88,6 +88,7 @@ function shutdown(code) {
       NODE_ENV: "development",
       WITNEXT_URL: `http://127.0.0.1:${mock.address().port}`,
       WITNEXT_INTEGRATION_SECRET: SECRET,
+      WITNEXT_INTEGRATION_ID: "test-integration",
       DEFAULT_AGENT_IDENTITY: "sim-agent",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -110,12 +111,13 @@ function shutdown(code) {
   });
   await sleep(300);
   await twilioPost("/voice/transcription", { CallSid: SID, TranscriptionEvent: "transcription-stopped" });
-  await sleep(1500);
+  await twilioPost("/voice/status", { CallSid: SID, CallStatus: "completed", CallDuration: "42" });
+  await sleep(3500);
   await twilioPost("/recording/status", {
     CallSid: SID, RecordingSid: "RE" + "0".repeat(32),
     RecordingUrl: "https://api.twilio.com/rec/RE1", RecordingDuration: "42", RecordingStatus: "completed",
   });
-  await sleep(800);
+  await sleep(1800);
 
   let passed = 0, failed = 0;
   const check = (label, cond) => {
