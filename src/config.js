@@ -37,6 +37,7 @@ export const config = {
     .filter(Boolean),
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID,
+    authToken: process.env.TWILIO_AUTH_TOKEN,
     apiKeySid: process.env.TWILIO_API_KEY_SID,
     apiKeySecret: process.env.TWILIO_API_KEY_SECRET,
     twimlAppSid: process.env.TWILIO_TWIML_APP_SID,
@@ -44,6 +45,14 @@ export const config = {
   },
   defaultAgentIdentity: process.env.DEFAULT_AGENT_IDENTITY || "agent",
   databaseUrl: process.env.DATABASE_URL || null,
+
+  transcription: {
+    provider: (process.env.TRANSCRIPTION_PROVIDER || 'twilio').toLowerCase(),
+    apiKey: process.env.ASSEMBLYAI_API_KEY || null,
+    endpoint: process.env.ASSEMBLYAI_STREAMING_URL || 'wss://streaming.us.assemblyai.com/v3/ws',
+    model: process.env.ASSEMBLYAI_SPEECH_MODEL || 'universal-streaming-english',
+    maxCalls: Number(process.env.ASSEMBLYAI_MAX_CALLS || 10),
+  },
 
   messaging: {
     enabled: process.env.MESSAGING_ENABLED !== "false",

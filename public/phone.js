@@ -70,6 +70,11 @@ function renderRecap(call) {
   $('actionItems').replaceChildren(...(call.recap?.action_items || call.recap?.nextSteps || []).map(item => node('li', typeof item === 'string' ? item.text || item : item.text || item.description || JSON.stringify(item))));
   $('retryRecap').disabled = (!call.ended_at && !call.transcript_stopped_at) || state.me?.role === 'viewer';
 }
+function renderTranscriptionStatus(provider, status) {
+  $('transcriptionStatus').textContent = status === 'error'
+    ? 'Live transcription was interrupted. This transcript may be incomplete.'
+    : provider ? `${provider === 'assemblyai' ? 'AssemblyAI' : 'Transcription'} · ${pretty(status || 'waiting')}` : '';
+}
 async function selectCall(sid) {
   state.selectedSid = sid;
   $('messagesPanel').hidden = true;
@@ -98,6 +103,7 @@ async function selectCall(sid) {
   $('saveNotes').disabled = state.me?.role === 'viewer';
   $('saveStatus').textContent = draft ? 'Unsaved changes' : '';
   renderRecap(c); renderTranscript(detail.segments || []);
+  renderTranscriptionStatus(c.transcription_provider, c.transcription_state);
   $('recordings').replaceChildren(...(detail.recordings || []).map(recording => {
     const box = node('div'); box.append(node('p', `${pretty(recording.kind)} · ${recording.duration_seconds ?? '?'} seconds · ${recording.status}`));
     if (recording.status === 'completed') { const audio = node('audio'); audio.controls = true; audio.preload = 'none'; audio.src = `/api/phone/calls/${encodeURIComponent(sid)}/recordings/${encodeURIComponent(recording.recording_sid)}`; box.append(audio); }
@@ -200,8 +206,10 @@ function connectWS() {
       return;
     }
     if (message.type === 'transcript') {
+      if (!$('transcript').querySelector('.utterance')) $('transcript').replaceChildren();
       const p = node('div', null, 'utterance'); p.append(node('strong', pretty(message.speaker)), node('span', message.text)); $('transcript').append(p); $('transcript').scrollTop = $('transcript').scrollHeight;
     }
+    if (message.type === 'transcription_status') renderTranscriptionStatus(message.provider, message.state);
     if (message.type === 'coaching') $('coaching').replaceChildren(...(message.cues || []).map(c => node('div', c.text, 'cue')));
     if (message.type === 'recap') { renderRecap({ recap: message.recap, recap_state: 'ready', ended_at: true }); requestRefresh(); }
   };

@@ -13,6 +13,14 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   const isProd = process.env.NODE_ENV === "production";
   const fatal = [];
   const warn = [];
+  if (!['twilio', 'assemblyai'].includes(config.transcription.provider)) fatal.push('TRANSCRIPTION_PROVIDER must be twilio or assemblyai.');
+  if (config.transcription.provider === 'assemblyai') {
+    if (!config.transcription.apiKey) fatal.push('ASSEMBLYAI_API_KEY is required for AssemblyAI transcription.');
+    if (!config.twilio.accountSid || !config.twilio.authToken) fatal.push('Twilio account SID and auth token are required for signed Media Streams.');
+    if (!['wss://streaming.assemblyai.com/v3/ws', 'wss://streaming.us.assemblyai.com/v3/ws', 'wss://streaming.eu.assemblyai.com/v3/ws'].includes(config.transcription.endpoint)) fatal.push('ASSEMBLYAI_STREAMING_URL must be an official AssemblyAI v3 endpoint.');
+    if (!Number.isInteger(config.transcription.maxCalls) || config.transcription.maxCalls < 1 || config.transcription.maxCalls > 100) fatal.push('ASSEMBLYAI_MAX_CALLS must be an integer from 1 to 100.');
+    if (!config.coachingEnabled && !config.recapEnabled) warn.push('Both coaching and recap are disabled: transcription will not start.');
+  }
   fatal.push(...validateRouting(config.voice.routing));
   if (isProd && !config.databaseUrl) fatal.push('DATABASE_URL is required for durable call records and delivery.');
   if (isProd && !process.env.TWILIO_AUTH_TOKEN) fatal.push('TWILIO_AUTH_TOKEN is required to authenticate provider webhooks.');

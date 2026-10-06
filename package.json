@@ -16,7 +16,10 @@
     "purge-retention": "node scripts/purge-retention.js",
     "lint": "eslint src scripts test",
     "test": "node --test",
-    "start:render": "node scripts/start-render.js"
+    "start:render": "node scripts/start-render.js",
+    "pilot:init": "node scripts/pilot-env.js",
+    "pilot:check": "node scripts/pilot-check.js",
+    "pilot:verify-call": "node scripts/pilot-verify-call.js"
   },
   "engines": {
     "node": ">=18"

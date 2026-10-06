@@ -26,6 +26,8 @@ import { onCallComplete, doScreenPop } from './realtime/orchestrator.js';
 import { sendWitnextEvent } from './integrations/witnext.js';
 import { pageGate, roleAtLeast } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
+import { attachMediaWss } from './realtime/media.js';
+import { recoverInterruptedStreams } from './realtime/transcription.js';
 import { loadRevocations } from "./auth/revocation.js";
 import { securityHeaders } from "./middleware/security.js";
 import { ensureCsrfCookie } from "./middleware/csrf.js";
@@ -170,8 +172,10 @@ app.use((err, req, res, _next) => {
 loadRevocations().catch(() => {});
 
 // Single HTTP server shared by Express and the agent WebSocket channel.
+await recoverInterruptedStreams();
 const server = http.createServer(app);
 attachAgentWss(server);
+const media = attachMediaWss(server);
 const stopWorker = startWorker({
   recap: ({ callSid }) => onCallComplete(callSid),
   screenPop: ({ callSid }) => doScreenPop(callSid),
@@ -182,11 +186,13 @@ const stopWorker = startWorker({
     return sendWitnextEvent(eventType, payload, { eventId, occurredAt });
   },
 });
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   stopWorker();
+  const deadline = setTimeout(() => process.exit(0), 10000);
+  deadline.unref();
+  await media.close();
   server.close(() => db.close().then(() => process.exit(0)));
   // Active calls remain on Twilio. Unfinished jobs recover after lease expiry.
-  setTimeout(() => process.exit(0), 10000).unref();
 });
 
 server.listen(config.port, () => {

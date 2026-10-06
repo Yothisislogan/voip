@@ -1,0 +1,61 @@
+# Standalone file: do NOT combine with the legacy docker-compose.yml.
+name: wit-connect-pilot
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wit
+      POSTGRES_DB: wit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.pilot}
+    volumes:
+      - pilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U wit -d wit]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.pilot
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      DATABASE_URL: postgresql://wit:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/wit
+    # Production validation runs BEFORE migration on every startup.
+    command: [npm, run, start:render]
+    stop_grace_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+    expose: ['3000']
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      WIT_DOMAIN: ${WIT_DOMAIN:?Set WIT_DOMAIN to a DNS name pointing at this host}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - pilot_caddy_data:/data
+      - pilot_caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  pilot_pgdata:
+  pilot_caddy_data:
+  pilot_caddy_config:
