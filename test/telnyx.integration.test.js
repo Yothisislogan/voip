@@ -77,7 +77,8 @@ integration('inbound browser routing, transfer identity and voicemail recording 
   await event(leg.control_id, 'call.answered'); await event(customer, 'call.bridged');
   assert.equal((await loadCall(root)).agent_identity, agent('alice').identity);
   await restoreSession(root);
-  await transferTelnyx(await loadCall(root), agent('bob').identity, randomUUID());
+  const transferKey = randomUUID();
+  await transferTelnyx(await loadCall(root), agent('bob').identity, transferKey);
   const transfer = requests.at(-1);
   assert.ok(transfer.url.endsWith('/transfer'));
   const target = `v3:${randomUUID()}`, targetId = randomUUID();
@@ -86,6 +87,7 @@ integration('inbound browser routing, transfer identity and voicemail recording 
   await event(customer, 'call.bridged');
   assert.equal((await loadCall(root)).agent_identity, agent('bob').identity);
   assert.equal(getSession(root).identity, agent('bob').identity);
+  await assert.rejects(transferTelnyx(await loadCall(root), agent('alice').identity, transferKey), /already requested/);
   const recordingId = randomUUID();
   await event(customer, 'call.recording.saved', { recording_id: recordingId, recording_started_at: '2026-01-01T00:00:00Z', recording_ended_at: '2026-01-01T00:00:30Z' });
   assert.equal((await db.query('SELECT provider FROM call_recordings WHERE recording_sid=$1', [recordingId])).rows[0].provider, 'telnyx');

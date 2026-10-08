@@ -237,6 +237,8 @@ export async function startTelnyxMedia({ root }) {
 export async function transferTelnyx(call, identity, token) {
   await db.transaction(async tx => {
     const current = (await tx.query('SELECT * FROM calls WHERE twilio_call_sid=$1 FOR UPDATE', [call.twilio_call_sid])).rows[0];
+    const receipt = await tx.query('INSERT INTO service_receipts(receipt_key) VALUES($1) ON CONFLICT DO NOTHING RETURNING receipt_key', [`telnyx-transfer:${call.twilio_call_sid}:${token}`]);
+    if (!receipt.rows.length) throw Object.assign(new Error('Transfer already requested; inspect call before retrying'), { status: 409 });
     if (current.provider_state.phase !== 'active') throw Object.assign(new Error('Call is not ready to transfer'), { status: 409 });
     const s = current.provider_state;
     const generation = (s.generation || 0) + 1;
