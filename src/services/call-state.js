@@ -44,16 +44,18 @@ export async function createCall({ callSid, direction, from, to, identity, targe
       route_targets=CASE WHEN calls.direction IS NULL THEN EXCLUDED.route_targets ELSE calls.route_targets END,updated_at=now() RETURNING *`,
   [callSid, direction, from, to, shared ? null : external, shared ? external : null, identity || null,
     shared ? 'awaiting_lead' : 'unmatched', JSON.stringify(targets)]);
+  if (identity) await db.query('UPDATE calls SET assigned_to=coalesce(assigned_to,$2) WHERE twilio_call_sid=$1 AND NOT assignment_explicit', [callSid, identity]);
   return rows[0];
 }
 
 export function callPayload(call) {
   return {
-    source: 'twilio', call_id: call.twilio_call_sid, direction: call.direction,
+    source: call.provider || 'twilio', call_id: call.twilio_call_sid, direction: call.direction,
     // Never send a vendor transfer line as the CRM customer caller number.
     from: call.direction === 'inbound' ? call.customer_number : call.from_e164,
     to: call.to_e164, external_number: call.customer_number,
     source_number: call.source_number, agent_identity: call.agent_identity,
+    assigned_to: call.assigned_to, tags: call.tags || [],
     duration_seconds: call.duration_seconds,
     started_at: call.created_at?.toISOString?.() || call.created_at,
     ended_at: call.ended_at?.toISOString?.() || call.ended_at,
@@ -97,6 +99,7 @@ export async function applyStatus(body, { parentSid, agentIdentity, terminal = f
     const ended = TERMINAL.has(next);
     const result = (await tx.query(`UPDATE calls SET status=$2,
       agent_identity=coalesce($3,agent_identity),
+      assigned_to=CASE WHEN assignment_explicit THEN assigned_to ELSE coalesce($3,assigned_to,agent_identity) END,
       answered_at=CASE WHEN $6 THEN coalesce(answered_at,now()) ELSE answered_at END,
       ended_at=CASE WHEN $4 THEN coalesce(ended_at,now()) ELSE ended_at END,
       duration_seconds=CASE WHEN $4 THEN coalesce($5,duration_seconds) ELSE duration_seconds END,

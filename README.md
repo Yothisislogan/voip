@@ -1,5 +1,7 @@
 # WiT Connect voice service
 
+**Telnyx is the selected voice provider for new pilots.** See [Telnyx setup](docs/telnyx-pilot.md) for native calling, AssemblyAI, and call ownership/tags. The Twilio configuration below is retained for legacy installations.
+
 A browser calling and customer-workspace service built on Twilio Voice, Express,
 and PostgreSQL, with signed WiTnext integration and an optional Dialpad bridge
 for coexistence during migration.

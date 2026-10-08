@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config, webhookUrl } from '../config.js';
 import { db } from '../db.js';
@@ -8,14 +9,17 @@ import { getSession } from './sessions.js';
 import { publishToAgent } from './bus.js';
 import { runTracked } from '../jobs/deadletter.js';
 
+export const mediaEvents = new EventEmitter();
+mediaEvents.setMaxListeners(110);
+const ticketSecret = () => config.voiceProvider === 'telnyx' ? config.telnyx.mediaSecret : config.twilio.authToken;
 export const MEDIA_PATH = '/voice/media';
-const sign = value => createHmac('sha256', config.twilio.authToken).update(value).digest('base64url');
+const sign = value => createHmac('sha256', ticketSecret()).update(value).digest('base64url');
 
 export function streamTicket(callSid, expires = Date.now() + 300_000) {
   return `${expires}.${sign(`${callSid}:${expires}`)}`;
 }
 export function verifyStreamTicket(callSid, ticket) {
-  if (!config.twilio.authToken || typeof ticket !== 'string') return false;
+  if (!ticketSecret() || typeof ticket !== 'string') return false;
   const [expires, signature] = ticket.split('.');
   const remaining = Number(expires) - Date.now();
   if (!Number.isFinite(remaining) || remaining < 0 || remaining > 300_000 || !signature) return false;
@@ -38,7 +42,9 @@ export function startTranscription(twiml, callSid) {
 
 export async function saveAssemblyTurn({ callSid, streamSid, track, turn, timestamp }) {
   const call = await loadCall(callSid);
-  const providerTrack = `${track}_track`;
+  // Telnyx streams are anchored to the CUSTOMER leg for both call directions.
+  const logicalTrack = call?.provider === 'telnyx' && call.direction === 'outbound' ? (track === 'inbound' ? 'outbound' : 'inbound') : track;
+  const providerTrack = `${logicalTrack}_track`;
   const speaker = resolveSpeaker(call?.direction || getSession(callSid)?.direction, providerTrack);
   if (db.enabled) {
     const result = await persistUtterance({ CallSid: callSid, Track: providerTrack,

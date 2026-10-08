@@ -42,6 +42,7 @@ adminRouter.get("/api/admin/status", async (req, res) => {
     publicBaseUrl: config.publicBaseUrl || null,
     auth: { required: config.auth.required, twoFactor: config.auth.twoFactor.enabled, devLogin: config.auth.devLoginEnabled },
     db: { enabled: db.enabled, up: dbUp },
+    voice: { provider: config.voiceProvider, configured: config.voiceProvider === 'telnyx' ? !!(config.telnyx.apiKey && config.telnyx.connectionId && config.telnyx.callerId && config.telnyx.publicKey) : twilioMissing.length === 0, callerId: config.voiceProvider === 'telnyx' ? config.telnyx.callerId : config.twilio.callerId },
     twilio: {
       configured: twilioMissing.length === 0,
       missing: twilioMissing,

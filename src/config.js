@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-const required = [
+const required = process.env.VOICE_PROVIDER === "telnyx" ? ["TELNYX_API_KEY", "TELNYX_CONNECTION_ID", "TELNYX_CALLER_ID"] : [
   "TWILIO_ACCOUNT_SID",
   "TWILIO_API_KEY_SID",
   "TWILIO_API_KEY_SECRET",
@@ -43,11 +43,20 @@ export const config = {
     twimlAppSid: process.env.TWILIO_TWIML_APP_SID,
     callerId: process.env.TWILIO_CALLER_ID,
   },
+  voiceProvider: (process.env.VOICE_PROVIDER || 'twilio').toLowerCase(),
+  telnyx: {
+    apiKey: process.env.TELNYX_API_KEY || null,
+    publicKey: process.env.TELNYX_PUBLIC_KEY || null,
+    connectionId: process.env.TELNYX_CONNECTION_ID || null,
+    callerId: process.env.TELNYX_CALLER_ID || null,
+    mediaSecret: process.env.TELNYX_MEDIA_SECRET || null,
+    recordingHosts: (process.env.TELNYX_RECORDING_HOSTS || 'recordings.telnyx.com').split(',').map(s => s.trim()).filter(Boolean),
+  },
   defaultAgentIdentity: process.env.DEFAULT_AGENT_IDENTITY || "agent",
   databaseUrl: process.env.DATABASE_URL || null,
 
   transcription: {
-    provider: (process.env.TRANSCRIPTION_PROVIDER || 'twilio').toLowerCase(),
+    provider: (process.env.TRANSCRIPTION_PROVIDER || (process.env.VOICE_PROVIDER === 'telnyx' ? 'assemblyai' : 'twilio')).toLowerCase(),
     apiKey: process.env.ASSEMBLYAI_API_KEY || null,
     endpoint: process.env.ASSEMBLYAI_STREAMING_URL || 'wss://streaming.us.assemblyai.com/v3/ws',
     model: process.env.ASSEMBLYAI_SPEECH_MODEL || 'universal-streaming-english',
@@ -219,7 +228,7 @@ export const config = {
     csp:
       process.env.CONTENT_SECURITY_POLICY ||
       "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data:; connect-src 'self' https://eventgw.twilio.com wss://voice-js.roaming.twilio.com https://media.twiliocdn.com https://sdk.twilio.com; " +
+        "img-src 'self' data:; connect-src 'self' wss://rtc.telnyx.com wss://rtc.telnyx.eu https://rtc.telnyx.com https://rtc.telnyx.eu https://eventgw.twilio.com wss://voice-js.roaming.twilio.com https://media.twiliocdn.com https://sdk.twilio.com; " +
         "media-src 'self' blob: mediastream: https://media.twiliocdn.com https://sdk.twilio.com; frame-ancestors 'none'; base-uri 'self'; " +
         "form-action 'self'; object-src 'none'",
     hstsMaxAge: Number(process.env.HSTS_MAX_AGE) || 15552000, // 180 days
@@ -244,6 +253,7 @@ export const config = {
     transcriptDays: Number(process.env.RETENTION_TRANSCRIPT_DAYS) || 0,
     recordingDays: Number(process.env.RETENTION_RECORDING_DAYS) || 0,
     auditDays: Number(process.env.RETENTION_AUDIT_DAYS) || 0,
+    deleteTelnyxRecordings: process.env.RETENTION_DELETE_TELNYX_RECORDINGS === 'true',
     deleteTwilioRecordings: process.env.RETENTION_DELETE_TWILIO_RECORDINGS === "true",
   },
 };

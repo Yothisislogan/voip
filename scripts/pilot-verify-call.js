@@ -3,8 +3,8 @@ console.log = (...args) => console.error(...args);
 const { db } = await import('../src/db.js');
 const { config } = await import('../src/config.js');
 const sid = process.argv[2];
-if (!db.enabled || !/^CA[a-fA-F0-9]{32}$/.test(sid || '')) {
-  console.error('Usage: npm run pilot:verify-call -- CA... (requires DATABASE_URL)'); process.exitCode = 1;
+if (!db.enabled || !/^(CA[a-fA-F0-9]{32}|tn_[a-zA-Z0-9-]{16,64})$/.test(sid || '')) {
+  console.error('Usage: npm run pilot:verify-call -- CALL_ID (requires DATABASE_URL)'); process.exitCode = 1;
 } else {
   try {
     const call = (await db.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [sid])).rows[0];

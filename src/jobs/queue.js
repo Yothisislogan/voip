@@ -20,15 +20,15 @@ export async function enqueueJob(kind, key, payload, { delayMs = 0, refresh = fa
   );
 }
 
-export async function claimJob() {
+export async function claimJob(kinds = null) {
   const token = randomUUID();
   const { rows } = await db.query(
     `UPDATE service_jobs SET state='running', attempts=attempts+1,
        lease_until=now()+interval '5 minutes', lease_token=$1, claimed_at=now(), updated_at=now()
      WHERE id=(SELECT id FROM service_jobs
        WHERE ((state='pending' AND run_after<=now()) OR (state='running' AND lease_until<now()))
-         AND attempts < max_attempts
-       ORDER BY run_after,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [token]
+         AND attempts < max_attempts AND ($2::text[] IS NULL OR kind=ANY($2))
+       ORDER BY run_after,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`, [token, kinds]
   );
   return rows[0] || null;
 }
@@ -54,7 +54,7 @@ export async function drainJobs(handlers, limit = 20) {
     WHERE state='running' AND lease_until<now() AND attempts>=max_attempts`);
   let count = 0;
   while (count < limit) {
-    const job = await claimJob();
+    const job = await claimJob(Object.keys(handlers));
     if (!job) break;
     const heartbeat = setInterval(() => {
       db.query(`UPDATE service_jobs SET lease_until=now()+interval '5 minutes'

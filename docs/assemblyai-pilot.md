@@ -1,5 +1,7 @@
 # WiT Connect: AssemblyAI live-call pilot
 
+**Telnyx is the selected voice provider for new pilots.** See [Telnyx setup](telnyx-pilot.md) for native calling, AssemblyAI, and call ownership/tags. The Twilio configuration below is retained for legacy installations.
+
 ## What this release does
 
 Twilio handles telephone service and the browser softphone. A unidirectional

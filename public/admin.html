@@ -101,7 +101,8 @@ async function loadStatus(){
     const s=await(await api("/api/admin/status")).json();
     const cards=[];
     cards.push(card("Database", `${statusDot(s.db.up?"ok":s.db.enabled?"bad":"warn")} ${s.db.enabled?(s.db.up?"Up":"DOWN"):"Disabled"}`));
-    cards.push(card("Twilio", `${statusDot(s.twilio.configured?"ok":"warn")} ${s.twilio.configured?"Configured":"Incomplete"}`,
+    cards.push(card("Voice provider", `${esc(s.voice?.provider || "twilio")} · ${s.voice?.configured ? "Configured" : "Setup required"}`, esc(s.voice?.callerId || "")));
+    cards.push(card("Twilio (legacy / messaging / verification)", `${statusDot(s.twilio.configured?"ok":"warn")} ${s.twilio.configured?"Configured":"Incomplete"}`,
       s.twilio.configured?`caller ${esc(s.twilio.callerId||"")}${s.twilio.authTokenSet?"":" · no auth token"}`:`missing: ${esc((s.twilio.missing||[]).join(", "))}`));
     cards.push(card("Auth", `${statusDot(s.auth.required?"ok":"bad")} ${s.auth.required?"Enabled":"BYPASSED"}`,
       `${s.auth.twoFactor?"2FA on":"2FA off"}${s.auth.devLogin?" · dev login ON":""}`));
