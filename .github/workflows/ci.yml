@@ -52,7 +52,7 @@ jobs:
         run: npm run migrate
 
       - name: Voice service concurrency and recovery regressions
-        run: VOIP_TEST_DATABASE_URL="$DATABASE_URL" node --test test/voice-service.integration.test.js
+        run: VOIP_TEST_DATABASE_URL="$DATABASE_URL" node --test test/voice-service.integration.test.js test/telnyx.integration.test.js
 
       - name: Verify backup round trip
         run: npm run restore-test

@@ -3,6 +3,8 @@ npm-debug.log
 .git
 .gitignore
 .env
+.env.pilot
+pilot-evidence*.json
 .env.*
 *.log
 .DS_Store

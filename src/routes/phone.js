@@ -15,6 +15,10 @@ import { doScreenPop } from '../realtime/orchestrator.js';
 import { enqueueJob } from '../jobs/queue.js';
 import { emitWitnextEvent } from '../integrations/witnext.js';
 import { audit } from '../audit.js';
+import { updateOrganization } from '../services/call-organization.js';
+import { telnyxReady, recordingDownload } from '../providers/telnyx.js';
+import { startTelnyxOutbound, transferTelnyx, cancelTelnyx } from '../services/telnyx-voice.js';
+import { validDestination } from './voice.js';
 import { canAccessCall } from '../auth/call-access.js';
 
 export const phoneRouter = Router();
@@ -44,7 +48,8 @@ phoneRouter.use('/api/phone', requireAuth, csrfProtect, (_req, res, next) => {
 });
 phoneRouter.get('/api/phone/config', (req, res) => res.json({
   identity: req.agent.identity, role: req.agent.role,
-  calling: !!(client && config.twilio.twimlAppSid && config.twilio.callerId) && req.agent.role !== 'viewer',
+  provider: config.voiceProvider,
+  calling: (config.voiceProvider === 'telnyx' ? telnyxReady() && !!config.auth.agents.find(a => a.identity === req.agent.identity)?.telnyxCredentialId : !!(client && config.twilio.twimlAppSid && config.twilio.callerId)) && req.agent.role !== 'viewer',
   dispositions: DISPOSITIONS,
   agents: config.auth.agents.filter(a => a.role !== 'viewer').map(a => ({ identity: a.identity, name: a.name || a.identity })),
   capabilities: { mute: true, dtmf: true, inboundBlindTransfer: true, hold: false, warmTransfer: false, conference: false },
@@ -59,17 +64,34 @@ phoneRouter.post('/api/phone/presence', requireRole('agent'), asyncRoute(async (
   res.json({ status });
 }));
 
+phoneRouter.get('/api/phone/resolve', asyncRoute(async (req, res) => {
+  const leg = (await db.query('SELECT call_sid FROM call_legs WHERE control_id=$1', [String(req.query.control || '').slice(0,1024)])).rows[0];
+  const call = leg && await loadCall(leg.call_sid);
+  if (!canAccessCall(req.agent, call)) return res.sendStatus(404);
+  res.json({ callSid: call.twilio_call_sid });
+}));
+phoneRouter.post('/api/phone/dial', requireRole('agent'), asyncRoute(async (req, res) => {
+  if (config.voiceProvider !== 'telnyx' || !telnyxReady()) return res.sendStatus(503);
+  const to = validDestination(req.body.to);
+  const key = req.get('Idempotency-Key');
+  if (!to || !/^[a-f0-9-]{36}$/i.test(key || '')) return res.status(400).json({ error: 'Valid destination and Idempotency-Key required' });
+  const callSid = await startTelnyxOutbound(req.agent.identity, to, key);
+  audit({ req, action: 'call.dial', entityType: 'call', entityId: callSid });
+  res.status(202).json({ callSid });
+}));
 phoneRouter.get('/api/phone/calls', asyncRoute(async (req, res) => {
   const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 50));
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const q = String(req.query.q || '').slice(0, 200);
   const { rows } = await db.query(`SELECT c.*,coalesce(nullif(concat_ws(' ',p.first_name,p.last_name),''),p.company) AS customer_name,
     p.email AS customer_email FROM calls c LEFT JOIN contacts p ON p.id=c.contact_id
-    WHERE ($1 OR c.agent_identity=$2 OR (c.agent_identity IS NULL AND c.route_targets ? $2))
+    WHERE ($1 OR c.agent_identity=$2 OR c.assigned_to=$2 OR (c.agent_identity IS NULL AND c.route_targets ? $2))
       AND ($3='' OR concat_ws(' ',c.customer_number,c.from_e164,c.to_e164,p.first_name,p.last_name,p.company) ILIKE '%'||$3||'%')
       AND ($4='' OR ($4='voicemail' AND c.is_voicemail) OR ($4='missed' AND c.status IN ('missed','abandoned')) OR c.status=$4)
+      AND ($7='' OR ($7='__unassigned__' AND c.assigned_to IS NULL) OR c.assigned_to=$7)
+      AND ($8='' OR EXISTS(SELECT 1 FROM unnest(c.tags) tag WHERE lower(tag)=lower($8)))
     ORDER BY c.created_at DESC LIMIT $5 OFFSET $6`,
-  [req.agent.role === 'admin', req.agent.identity, q, String(req.query.status || ''), limit, offset]);
+  [req.agent.role === 'admin', req.agent.identity, q, String(req.query.status || ''), limit, offset, String(req.query.owner || '').slice(0,128), String(req.query.tag || '').slice(0,40)]);
   res.json({ calls: rows, offset, limit });
 }));
 
@@ -86,6 +108,19 @@ phoneRouter.get('/api/phone/calls/:sid', asyncRoute(async (req, res) => {
   const candidates = req.call.source_number && req.call.identity_state !== 'matched' ? await findLeadCandidates(req.call) : [];
   audit({ req, action: 'call.view', entityType: 'call', entityId: sid });
   res.json({ call: req.call, segments, recordings, candidates });
+}));
+phoneRouter.patch('/api/phone/calls/:sid/organization', requireRole('agent'), asyncRoute(async (req, res) => {
+  const before = { owner: req.call.assigned_to, tags: req.call.tags };
+  const call = await updateOrganization(req.call.twilio_call_sid, req.agent, req.body);
+  audit({ req, action: 'call.organization', entityType: 'call', entityId: call.twilio_call_sid,
+    detail: { before, after: { owner: call.assigned_to, tags: call.tags } } });
+  if (call.ended_at) await emitWitnextEvent('call.completed', callPayload(call));
+  res.json({ call });
+}));
+phoneRouter.post('/api/phone/calls/:sid/hangup', requireRole('agent'), asyncRoute(async (req, res) => {
+  if (req.call.provider !== 'telnyx') return res.sendStatus(400);
+  if (req.agent.role !== 'admin' && req.call.agent_identity !== req.agent.identity) return res.sendStatus(403);
+  await cancelTelnyx(req.call); res.json({ requested: true });
 }));
 phoneRouter.patch('/api/phone/calls/:sid', requireRole('agent'), asyncRoute(async (req, res) => {
   if (req.body.notes !== undefined && (typeof req.body.notes !== 'string' || req.body.notes.length > 10000)) return res.status(400).json({ error: 'Notes must be text under 10,000 characters' });
@@ -111,12 +146,18 @@ phoneRouter.post('/api/phone/calls/:sid/recap', requireRole('agent'), asyncRoute
 }));
 phoneRouter.post('/api/phone/calls/:sid/transfer', requireRole('agent'), asyncRoute(async (req, res) => {
   const call = req.call;
-  if (!client) return res.status(503).json({ error: 'Telephony provider not configured' });
+  if (call.provider !== 'telnyx' && !client) return res.status(503).json({ error: 'Telephony provider not configured' });
   if (call.direction !== 'inbound' || call.status !== 'in_progress') return res.status(409).json({ error: 'Blind transfer currently requires an active inbound call' });
   const target = config.auth.agents.find(a => a.identity === req.body.identity && a.role !== 'viewer');
   if (!target || target.identity === call.agent_identity) return res.status(400).json({ error: 'Choose a different calling-enabled agent' });
   const token = req.get('Idempotency-Key');
   if (!token || !/^[a-zA-Z0-9-]{16,100}$/.test(token)) return res.status(400).json({ error: 'Idempotency-Key required' });
+  if (req.agent.role !== 'admin' && call.agent_identity !== req.agent.identity) return res.sendStatus(403);
+  if (call.provider === 'telnyx') {
+    await transferTelnyx(call, target.identity, token);
+    audit({ req, action: 'call.transfer', entityType: 'call', entityId: call.twilio_call_sid, detail: { target: target.identity } });
+    return res.json({ requested: true });
+  }
   const reserved = await db.transaction(async tx => {
     const receipt = await tx.query(`INSERT INTO service_receipts(receipt_key) VALUES($1) ON CONFLICT DO NOTHING RETURNING receipt_key`, [`transfer:${req.agent.identity}:${token}`]);
     if (!receipt.rows.length) return false;
@@ -146,15 +187,15 @@ phoneRouter.post('/api/phone/calls/:sid/transfer', requireRole('agent'), asyncRo
 
 phoneRouter.get('/api/phone/calls/:sid/recordings/:recordingSid', asyncRoute(async (req, res) => {
   const sid = req.params.recordingSid;
-  if (!/^RE[0-9a-f]{32}$/i.test(sid)) return res.sendStatus(400);
+  if (!(req.call.provider === 'telnyx' ? /^[a-f0-9-]{36}$/i : /^RE[0-9a-f]{32}$/i).test(sid)) return res.sendStatus(400);
   const row = (await db.query(`SELECT * FROM call_recordings WHERE recording_sid=$1 AND call_sid=$2 AND status='completed'`, [sid, req.call.twilio_call_sid])).rows[0];
-  if (!row || !config.twilio.accountSid || !config.twilio.apiKeySid) return res.sendStatus(404);
+  if (!row || (row.provider !== 'telnyx' && (!config.twilio.accountSid || !config.twilio.apiKeySid))) return res.sendStatus(404);
   // Construct from validated IDs; never fetch a webhook-supplied arbitrary URL.
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${config.twilio.accountSid}/Recordings/${sid}.mp3`;
+  const url = row.provider === 'telnyx' ? await recordingDownload(sid) : `https://api.twilio.com/2010-04-01/Accounts/${config.twilio.accountSid}/Recordings/${sid}.mp3`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const upstream = await fetch(url, { headers: { Authorization: `Basic ${Buffer.from(`${config.twilio.apiKeySid}:${config.twilio.apiKeySecret}`).toString('base64')}` },
+    const upstream = await fetch(url, { headers: row.provider === 'telnyx' ? {} : { Authorization: `Basic ${Buffer.from(`${config.twilio.apiKeySid}:${config.twilio.apiKeySecret}`).toString('base64')}` },
       signal: controller.signal, redirect: 'error' });
     if (!upstream.ok) return res.status(502).json({ error: 'Recording unavailable at provider' });
     res.type('audio/mpeg');

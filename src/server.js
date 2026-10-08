@@ -19,6 +19,8 @@ import { emailRouter } from "./routes/email.js";
 import { dialpadRouter, hydrateDialpadTranscript } from "./routes/dialpad.js";
 import { crmRouter } from "./routes/crm.js";
 import { adminRouter } from "./routes/admin.js";
+import { telnyxRouter } from './routes/telnyx.js';
+import { handleTelnyxEvent, runTelnyxStart, startTelnyxMedia, expireTelnyxSetup, stopTelnyxLeg } from './services/telnyx-voice.js';
 import { phoneRouter } from './routes/phone.js';
 import { runPostCall } from './services/post-call.js';
 import { startWorker } from './jobs/queue.js';
@@ -26,6 +28,8 @@ import { onCallComplete, doScreenPop } from './realtime/orchestrator.js';
 import { sendWitnextEvent } from './integrations/witnext.js';
 import { pageGate, roleAtLeast } from "./auth/middleware.js";
 import { attachAgentWss } from "./realtime/ws.js";
+import { attachMediaWss } from './realtime/media.js';
+import { recoverInterruptedStreams } from './realtime/transcription.js';
 import { loadRevocations } from "./auth/revocation.js";
 import { securityHeaders } from "./middleware/security.js";
 import { ensureCsrfCookie } from "./middleware/csrf.js";
@@ -57,7 +61,7 @@ app.use(
 // Body parsers with explicit size caps — an unbounded body is a cheap DoS.
 // Twilio/webhook posts and our JSON APIs are all well under 100kb.
 app.use(express.urlencoded({ extended: false, limit: "100kb" })); // Twilio posts form-encoded
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "100kb", verify: (req, _res, body) => { if (req.path === "/telnyx/voice") req.rawBody = Buffer.from(body); } }));
 
 // Plant the double-submit CSRF cookie so browser pages can echo it back.
 app.use(ensureCsrfCookie);
@@ -103,8 +107,11 @@ app.get("/admin.html", pageGate, (req, res, next) => {
   next();
 });
 
+app.get('/vendor/telnyx.js', (_req, res) => res.sendFile(path.join(__dirname, '../node_modules/@telnyx/webrtc/lib/bundle.js')));
 app.get('/vendor/twilio.min.js', (_req, res) => res.sendFile(path.join(__dirname, '../node_modules/@twilio/voice-sdk/dist/twilio.min.js')));
+app.get('/call.html', (req, res) => res.redirect(`/phone.html${req.query.sid ? `?call=${encodeURIComponent(String(req.query.sid))}` : ''}`));
 app.get('/softphone.html', (_req, res) => res.redirect('/phone.html'));
+app.get(['/', '/index.html'], (_req, res) => res.redirect('/phone.html'));
 app.use(express.static(publicDir));
 
 // Validate X-Twilio-Signature on all webhook routes.
@@ -131,7 +138,7 @@ const twilioWebhook = (() => {
 // request that falls through that layer — API calls would be multi-counted and
 // unmatched paths would drain the buckets.)
 app.use(["/token", "/ai", "/api", "/messaging/send", "/messaging/conversations"], apiLimiter);
-app.use(["/voice", "/recording", "/messaging/inbound", "/email", "/dialpad", "/integrations/lead-signals"], webhookLimiter);
+app.use(["/telnyx", "/voice", "/recording", "/messaging/inbound", "/email", "/dialpad", "/integrations/lead-signals"], webhookLimiter);
 
 // Dialpad posts its JWT-signed payload as a raw text body; parse it as text on
 // that path only (verified inside the route — never trusted unparsed).
@@ -153,8 +160,8 @@ app.use(messagingRouter); // agent send + conversation list (requireAuth + CSRF 
 // optional shared token.
 app.use(emailRouter);
 app.use(dialpadRouter); // Dialpad → WiTNext broker (JWT-verified inside)
-app.use(voiceRouter);
-app.use(recordingRouter);
+app.use(telnyxRouter);
+if (config.voiceProvider === 'twilio') { app.use(voiceRouter); app.use(recordingRouter); }
 app.use(messagingWebhookRouter);
 
 // Uniform JSON 404 + a final error handler that never leaks stack traces.
@@ -170,8 +177,11 @@ app.use((err, req, res, _next) => {
 loadRevocations().catch(() => {});
 
 // Single HTTP server shared by Express and the agent WebSocket channel.
+await recoverInterruptedStreams();
 const server = http.createServer(app);
 attachAgentWss(server);
+const media = attachMediaWss(server);
+const stopVoiceWorker = startWorker({ telnyxEvent: handleTelnyxEvent, telnyxStart: runTelnyxStart, telnyxMedia: startTelnyxMedia, telnyxTimeout: expireTelnyxSetup, telnyxHangup: stopTelnyxLeg }, 100);
 const stopWorker = startWorker({
   recap: ({ callSid }) => onCallComplete(callSid),
   screenPop: ({ callSid }) => doScreenPop(callSid),
@@ -182,11 +192,13 @@ const stopWorker = startWorker({
     return sendWitnextEvent(eventType, payload, { eventId, occurredAt });
   },
 });
-process.on('SIGTERM', () => {
-  stopWorker();
+process.on('SIGTERM', async () => {
+  stopWorker(); stopVoiceWorker();
+  const deadline = setTimeout(() => process.exit(0), 10000);
+  deadline.unref();
+  await media.close();
   server.close(() => db.close().then(() => process.exit(0)));
   // Active calls remain on Twilio. Unfinished jobs recover after lease expiry.
-  setTimeout(() => process.exit(0), 10000).unref();
 });
 
 server.listen(config.port, () => {

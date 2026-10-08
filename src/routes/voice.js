@@ -11,17 +11,13 @@ import { selectTargets } from '../services/routing.js';
 import { normalizePhone } from '../util/phone.js';
 import { asyncRoute } from '../util/async-route.js';
 import { publishToAgent } from '../realtime/bus.js';
+import { startTranscription, setTranscriptionState } from '../realtime/transcription.js';
 
 const { VoiceResponse } = twilio.twiml;
 export const voiceRouter = Router();
 const STATUS_EVENTS = 'initiated ringing answered completed';
 const DISCLOSURE = 'This call may be recorded and transcribed for quality and training.';
 
-function maybeStartTranscription(twiml) {
-  if (!config.publicBaseUrl || (!config.coachingEnabled && !config.recapEnabled)) return;
-  twiml.start().transcription({ name: 'wit-coaching', track: 'both_tracks', partialResults: false,
-    statusCallbackUrl: webhookUrl('/voice/transcription') });
-}
 function recordingOptions() {
   return config.voice.recordingEnabled ? { record: 'record-from-answer-dual',
     recordingStatusCallback: webhookUrl('/recording/status'), recordingStatusCallbackEvent: 'completed absent' } : {};
@@ -66,7 +62,7 @@ voiceRouter.post('/voice/outbound', asyncRoute(async (req, res) => {
   const callSid = req.body.CallSid;
   await createCall({ callSid, direction: 'outbound', from: config.twilio.callerId, to, identity });
   startSession(callSid, { identity, customerNumber: to, direction: 'outbound', from: config.twilio.callerId, to });
-  maybeStartTranscription(twiml);
+  startTranscription(twiml, callSid);
   const dial = twiml.dial({ callerId: config.twilio.callerId, answerOnBridge: true,
     action: webhookUrl('/voice/outbound-done'), method: 'POST', ...recordingOptions() });
   dial.number({ statusCallback: statusUrl(callSid), statusCallbackEvent: STATUS_EVENTS, statusCallbackMethod: 'POST',
@@ -92,7 +88,7 @@ voiceRouter.post('/voice/inbound', asyncRoute(async (req, res) => {
   startSession(callSid, { identity: route.targets.length === 1 ? route.targets[0] : null,
     customerNumber: from, direction: 'inbound', from, to });
   twiml.say(`Thank you for calling We Insure Things. ${config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled ? DISCLOSURE : ''}`);
-  maybeStartTranscription(twiml);
+  startTranscription(twiml, callSid);
   if (route.targets.length) {
     const dial = twiml.dial({ callerId: from, timeout: route.timeout, answerOnBridge: true,
       action: webhookUrl('/voice/dial-status'), method: 'POST', ...recordingOptions() });
@@ -152,6 +148,15 @@ voiceRouter.post('/voice/status', asyncRoute(async (req, res) => {
     if (session) session.identity = call.agent_identity;
     publishToAgent(call.agent_identity, 'call_status', { callSid: call.twilio_call_sid, status: call.status });
     if (req.body.CallStatus === 'in-progress') await queueScreenPop(call.twilio_call_sid);
+  }
+  res.sendStatus(204);
+}));
+
+voiceRouter.post('/voice/media-status', asyncRoute(async (req, res) => {
+  // Signature middleware protects this route. A failed handshake may never
+  // reach our WebSocket handler, so preserve Twilio's error callback as well.
+  if (config.transcription.provider === 'assemblyai' && req.body.StreamEvent === 'stream-error') {
+    await setTranscriptionState(req.body.CallSid, 'error', 'media_stream_error');
   }
   res.sendStatus(204);
 }));

@@ -1,7 +1,7 @@
 {
   "name": "wit-connect-telephony",
   "version": "0.1.0",
-  "description": "WiT Connect \u2014 durable browser voice, customer identity, transcripts, messaging, and signed WiTnext integration.",
+  "description": "WiT Connect — durable browser voice, customer identity, transcripts, messaging, and signed WiTnext integration.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -16,18 +16,23 @@
     "purge-retention": "node scripts/purge-retention.js",
     "lint": "eslint src scripts test",
     "test": "node --test",
-    "start:render": "node scripts/start-render.js"
+    "start:render": "node scripts/start-render.js",
+    "pilot:init": "node scripts/pilot-env.js",
+    "pilot:check": "node scripts/pilot-check.js",
+    "pilot:verify-call": "node scripts/pilot-verify-call.js"
   },
   "engines": {
     "node": ">=18"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "eslint": "^9.0.0"
+    "eslint": "^9.0.0",
+    "jsdom": "26.1.0"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.31.0",
     "@anthropic-ai/sdk": "^0.32.1",
+    "@telnyx/webrtc": "2.27.10",
     "@twilio/voice-sdk": "2.18.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -35,6 +40,7 @@
     "google-auth-library": "^10.9.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.12.0",
+    "telnyx": "7.2.0",
     "twilio": "^5.3.0",
     "ws": "^8.18.0"
   }

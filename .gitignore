@@ -1,5 +1,7 @@
 node_modules/
 .env
 .env.local
+.env.pilot
+pilot-evidence*.json
 *.log
 .DS_Store

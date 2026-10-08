@@ -23,6 +23,7 @@ export default [
         URL: "readonly",
         URLSearchParams: "readonly",
         AbortController: "readonly",
+        AbortSignal: "readonly",
         __dirname: "readonly",
       },
     },

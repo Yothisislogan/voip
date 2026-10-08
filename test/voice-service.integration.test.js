@@ -143,3 +143,31 @@ integration('uncertain external post-call side effect cannot be blindly resent b
     assert.equal((await db.query('SELECT state FROM post_call_effects WHERE effect_key=$1',[`survey:${id}`])).rows[0].state,'attempting');
   } finally { config.survey.enabled=false; }
 });
+
+integration('AssemblyAI final turns persist once per track and an interruption survives stream stop', async () => {
+  const { saveAssemblyTurn, setTranscriptionState, recoverInterruptedStreams } = await import('../src/realtime/transcription.js');
+  const id = sid('assemblyai');
+  await createCall({ callSid: id, direction: 'outbound', from: '+12025550100', to: '+12025550110', identity: 'alice' });
+  const utterance = { callSid: id, streamSid: `MZ${prefix}`, track: 'inbound',
+    turn: { turn_order: 0, transcript: 'I can help with that quote.' }, timestamp: Date.now() };
+  await saveAssemblyTurn(utterance);
+  await saveAssemblyTurn(utterance);
+  await saveAssemblyTurn({ ...utterance, track: 'outbound', turn: { turn_order: 0, transcript: 'Please call tomorrow.' } });
+  const segments = (await db.query('SELECT speaker,text FROM transcript_segments WHERE call_sid=$1 ORDER BY seq', [id])).rows;
+  assert.equal(segments.length, 2);
+  assert.deepEqual(segments.map(s => s.speaker), ['agent', 'customer']);
+  await setTranscriptionState(id, 'streaming');
+  await setTranscriptionState(id, 'error', 'assemblyai_disconnected');
+  await setTranscriptionState(id, 'stopped');
+  const call = await loadCall(id);
+  assert.equal(call.transcription_state, 'error');
+  assert.equal(call.transcription_error, 'assemblyai_disconnected');
+  assert.ok(call.transcript_stopped_at);
+  assert.equal(call.status, 'queued'); // A transcript failure cannot hang up a call.
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM service_jobs WHERE job_key=$1", [`recap:${id}`])).rows[0].n, 1);
+  const interrupted = sid('assemblyai-crash');
+  await createCall({ callSid: interrupted, direction: 'inbound', from: '+12025550111', to: '+12025550100', identity: 'alice' });
+  await setTranscriptionState(interrupted, 'streaming');
+  await recoverInterruptedStreams();
+  assert.equal((await loadCall(interrupted)).transcription_error, 'server_restart');
+});

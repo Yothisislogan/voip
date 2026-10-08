@@ -2,6 +2,7 @@ import pg from "pg";
 import { config } from "../src/config.js";
 import { log } from "../src/logger.js";
 import { client as twilioClient } from "../src/twilio.js";
+import { telnyxRequest } from '../src/providers/telnyx.js';
 import { recordConsentEvent } from "../src/store/consent.js";
 
 /**
@@ -40,14 +41,18 @@ async function main() {
 
     if (recordingDays > 0) {
       const { rows } = await c.query(
-        `SELECT recording_sid,call_sid,url FROM call_recordings
+        `SELECT recording_sid,call_sid,url,provider FROM call_recordings
           WHERE created_at < now() - ($1 || ' days')::interval AND status <> 'deleted'`,
         [String(recordingDays)]
       );
       let twilioDeleted = 0;
       for (const row of rows) {
         let providerDeleted = false;
-        if (deleteTwilioRecordings && twilioClient) {
+        if (row.provider === 'telnyx' && config.retention.deleteTelnyxRecordings) {
+          try { await telnyxRequest(`/recordings/${encodeURIComponent(row.recording_sid)}`, { method: 'DELETE' }); providerDeleted = true; }
+          catch (error) { if (error.status === 404) providerDeleted = true; else log.warn('purge.telnyx_delete_failed', { sid: row.recording_sid }); }
+        }
+        if (row.provider !== 'telnyx' && deleteTwilioRecordings && twilioClient) {
           try {
             await twilioClient.recordings(row.recording_sid).remove();
             providerDeleted = true;

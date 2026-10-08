@@ -1,5 +1,7 @@
 # WiT Connect voice service
 
+**Telnyx is the selected voice provider for new pilots.** See [Telnyx setup](docs/telnyx-pilot.md) for native calling, AssemblyAI, and call ownership/tags. The Twilio configuration below is retained for legacy installations.
+
 A browser calling and customer-workspace service built on Twilio Voice, Express,
 and PostgreSQL, with signed WiTnext integration and an optional Dialpad bridge
 for coexistence during migration.
@@ -132,3 +134,11 @@ or send real SMS.
 The PostgreSQL queue supports competing workers. Live browser events still use
 an in-process event bus; do not assume multi-instance live delivery or a tested
 high-availability service without adding a shared event transport.
+# AssemblyAI live-call pilot
+
+For real-time AssemblyAI transcription with the existing browser phone, see
+[the deployment and real-call test guide](docs/assemblyai-pilot.md).
+The opt-in provider uses Twilio Media Streams, separate speaker tracks, durable
+final transcripts and visible interruption status. DigitalOcean/Hetzner pilot
+Compose and authenticated Render deployment are supported paths. Live calling
+still requires provider credentials, HTTPS, a pilot number and an agent login.
