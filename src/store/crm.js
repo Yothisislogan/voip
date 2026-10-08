@@ -149,7 +149,7 @@ export async function listCalls({ contactId, limit = 50, agent } = {}) {
     if (contactId) { params.push(contactId); where = "WHERE c.contact_id = $1"; }
     if (agent && agent.role !== 'admin') {
       params.push(agent.identity);
-      where += `${where ? ' AND' : 'WHERE'} (c.agent_identity=$${params.length} OR (c.agent_identity IS NULL AND c.route_targets ? $${params.length}))`;
+      where += `${where ? ' AND' : 'WHERE'} (c.agent_identity=$${params.length} OR c.assigned_to=$${params.length} OR (c.agent_identity IS NULL AND c.route_targets ? $${params.length}))`;
     }
     params.push(lim);
     const r = await db.query(

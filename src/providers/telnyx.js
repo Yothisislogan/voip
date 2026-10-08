@@ -1,4 +1,4 @@
-import { createPublicKey, verify, randomUUID } from 'node:crypto';
+import { createPublicKey, verify, randomUUID, createHash } from 'node:crypto';
 import { config } from '../config.js';
 import { db } from '../db.js';
 
@@ -43,10 +43,14 @@ export function verifyTelnyxWebhook(raw, headers, now = Date.now()) {
 // Accepted responses make webhook replays safe after a later database rollback.
 export async function telnyxCommand(key, path, body = {}) {
   const id = randomUUID();
-  const inserted = await db.query(`INSERT INTO telnyx_commands(command_key,command_id,state)
-    VALUES($1,$2,'attempting') ON CONFLICT DO NOTHING RETURNING command_id`, [key, id]);
+  const normalized = { ...body };
+  if (normalized.stream_url) { const url = new URL(normalized.stream_url); url.searchParams.delete('ticket'); normalized.stream_url = url.toString(); }
+  const fingerprint = createHash('sha256').update(JSON.stringify([path, normalized])).digest('hex');
+  const inserted = await db.query(`INSERT INTO telnyx_commands(command_key,command_id,request_hash,state)
+    VALUES($1,$2,$3,'attempting') ON CONFLICT DO NOTHING RETURNING command_id`, [key, id, fingerprint]);
   if (!inserted.rows.length) {
     const prior = (await db.query('SELECT * FROM telnyx_commands WHERE command_key=$1', [key])).rows[0];
+    if (prior.request_hash !== fingerprint) throw new Error('Telnyx command key was already used with different parameters');
     if (prior.state === 'accepted') return prior.response;
     throw new Error('Telnyx command outcome needs reconciliation; automatic resend blocked');
   }

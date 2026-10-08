@@ -20,6 +20,7 @@ ALTER TABLE call_recordings ADD COLUMN provider TEXT NOT NULL DEFAULT 'twilio';
 CREATE TABLE telnyx_commands (
   command_key TEXT PRIMARY KEY,
   command_id UUID NOT NULL,
+  request_hash TEXT NOT NULL,
   state TEXT NOT NULL CHECK(state IN ('attempting','accepted','uncertain')),
   response JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

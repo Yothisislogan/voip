@@ -109,6 +109,7 @@ app.get("/admin.html", pageGate, (req, res, next) => {
 
 app.get('/vendor/telnyx.js', (_req, res) => res.sendFile(path.join(__dirname, '../node_modules/@telnyx/webrtc/lib/bundle.js')));
 app.get('/vendor/twilio.min.js', (_req, res) => res.sendFile(path.join(__dirname, '../node_modules/@twilio/voice-sdk/dist/twilio.min.js')));
+app.get('/call.html', (req, res) => res.redirect(`/phone.html${req.query.sid ? `?call=${encodeURIComponent(String(req.query.sid))}` : ''}`));
 app.get('/softphone.html', (_req, res) => res.redirect('/phone.html'));
 app.get(['/', '/index.html'], (_req, res) => res.redirect('/phone.html'));
 app.use(express.static(publicDir));

@@ -9,6 +9,8 @@ const { startTelnyxOutbound, runTelnyxStart, handleTelnyxEvent, transferTelnyx }
 const { telnyxCommand } = await import('../src/providers/telnyx.js');
 const { loadCall, createCall } = await import('../src/services/call-state.js');
 const { updateOrganization } = await import('../src/services/call-organization.js');
+const { restoreSession } = await import('../src/realtime/orchestrator.js');
+const { getSession } = await import('../src/realtime/sessions.js');
 const { saveAssemblyTurn } = await import('../src/realtime/transcription.js');
 const integration = (name, fn) => test(name, { skip: !enabled }, fn);
 const originalFetch = globalThis.fetch;
@@ -74,6 +76,7 @@ integration('inbound browser routing, transfer identity and voicemail recording 
   let leg = (await db.query("SELECT * FROM call_legs WHERE call_sid=$1 AND purpose='agent'", [root])).rows[0];
   await event(leg.control_id, 'call.answered'); await event(customer, 'call.bridged');
   assert.equal((await loadCall(root)).agent_identity, agent('alice').identity);
+  await restoreSession(root);
   await transferTelnyx(await loadCall(root), agent('bob').identity, randomUUID());
   const transfer = requests.at(-1);
   assert.ok(transfer.url.endsWith('/transfer'));
@@ -82,6 +85,7 @@ integration('inbound browser routing, transfer identity and voicemail recording 
     call_leg_id: targetId, client_state: transfer.body.target_leg_client_state } });
   await event(customer, 'call.bridged');
   assert.equal((await loadCall(root)).agent_identity, agent('bob').identity);
+  assert.equal(getSession(root).identity, agent('bob').identity);
   const recordingId = randomUUID();
   await event(customer, 'call.recording.saved', { recording_id: recordingId, recording_started_at: '2026-01-01T00:00:00Z', recording_ended_at: '2026-01-01T00:00:30Z' });
   assert.equal((await db.query('SELECT provider FROM call_recordings WHERE recording_sid=$1', [recordingId])).rows[0].provider, 'telnyx');
@@ -96,6 +100,55 @@ integration('unknown provider command outcome cannot create a duplicate paid cal
     await assert.rejects(telnyxCommand(key, '/calls', { to: '+12025550111' }), /reconciliation/);
     assert.equal(attempts, 1);
   } finally { globalThis.fetch = saved; }
+});
+integration('simultaneous agent answers select one winner and preserve explicit ownership', async () => {
+  const customer = `v3:${randomUUID()}`, session = randomUUID(), root = `tn_${session}`;
+  const identities = [agent('alice').identity, agent('bob').identity];
+  config.voice.routing = { agents: identities, strategy: 'simultaneous' };
+  for (const identity of identities) await db.query(`INSERT INTO agent_presence(identity,status) VALUES($1,'available')
+    ON CONFLICT(identity) DO UPDATE SET status='available',heartbeat_at=now(),reserved_until=NULL`, [identity]);
+  try {
+    await handleTelnyxEvent({ id: randomUUID(), event_type: 'call.initiated', payload: {
+      call_control_id: customer, call_leg_id: randomUUID(), call_session_id: session, connection_id: 'app-test',
+      direction: 'incoming', from: '+12025550124', to: config.telnyx.callerId,
+    } });
+    await event(customer, 'call.answered');
+    const disclosure = [...requests].reverse().find(r => r.url.includes('/speak'));
+    await event(customer, 'call.speak.ended', { client_state: disclosure.body.client_state });
+    const legs = (await db.query("SELECT * FROM call_legs WHERE call_sid=$1 AND purpose='agent' ORDER BY agent_identity", [root])).rows;
+    assert.equal(legs.length, 2);
+    await updateOrganization(root, { identity: 'supervisor', role: 'admin' }, { assignedTo: agent('bob').identity, tags: ['Review'], version: 0 });
+    await Promise.all(legs.map(l => event(l.control_id, 'call.answered')));
+    const call = await loadCall(root);
+    assert.equal(call.provider_state.phase, 'bridging');
+    assert.ok(legs.some(l => l.control_id === call.provider_state.agent && l.agent_identity === call.agent_identity));
+    assert.equal(call.assigned_to, agent('bob').identity);
+    assert.equal((await db.query("SELECT count(*)::int n FROM telnyx_commands WHERE command_key=$1", [`${root}:bridge:0`])).rows[0].n, 1);
+    assert.equal((await db.query("SELECT count(*)::int n FROM service_jobs WHERE kind='telnyxHangup' AND payload->>'root'=$1", [root])).rows[0].n, 1);
+    await event(customer, 'call.hangup');
+  } finally { config.voice.routing = null; }
+});
+integration('unanswered inbound call reaches voicemail and recording completion queues hangup', async () => {
+  const customer = `v3:${randomUUID()}`, session = randomUUID(), root = `tn_${session}`;
+  await handleTelnyxEvent({ id: randomUUID(), event_type: 'call.initiated', payload: {
+    call_control_id: customer, call_leg_id: randomUUID(), call_session_id: session, connection_id: 'app-test',
+    direction: 'incoming', from: '+12025550125', to: config.telnyx.callerId,
+  } });
+  await event(customer, 'call.answered');
+  const disclosure = [...requests].reverse().find(r => r.url.includes('/speak'));
+  await event(customer, 'call.speak.ended', { client_state: disclosure.body.client_state });
+  const leg = (await db.query("SELECT * FROM call_legs WHERE call_sid=$1 AND purpose='agent'", [root])).rows[0];
+  await event(leg.control_id, 'call.hangup');
+  const greeting = [...requests].reverse().find(r => r.url.includes('/speak'));
+  await event(customer, 'call.speak.ended', { client_state: greeting.body.client_state });
+  assert.equal((await loadCall(root)).provider_state.phase, 'voicemail');
+  assert.equal(requests.at(-1).body.max_length, 120);
+  const recording = randomUUID();
+  await event(customer, 'call.recording.saved', { recording_id: recording });
+  assert.equal((await db.query('SELECT kind FROM call_recordings WHERE recording_sid=$1', [recording])).rows[0].kind, 'voicemail');
+  assert.equal((await db.query("SELECT count(*)::int n FROM service_jobs WHERE job_key=$1", [`telnyx-hangup:${root}:voicemail-done`])).rows[0].n, 1);
+  await event(customer, 'call.hangup');
+  assert.equal((await loadCall(root)).status, 'missed');
 });
 integration('owner and multiple tags persist atomically, reject stale edits and unauthorized access', async () => {
   const root = `organization-${prefix}`;

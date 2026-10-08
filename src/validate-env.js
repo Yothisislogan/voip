@@ -17,6 +17,10 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   if (config.voiceProvider === 'telnyx') {
     for (const key of ['apiKey', 'publicKey', 'connectionId', 'callerId', 'mediaSecret']) if (!config.telnyx[key]) fatal.push(`Telnyx ${key} is required.`);
     if ((config.telnyx.mediaSecret?.length || 0) < 32) fatal.push('TELNYX_MEDIA_SECRET must have at least 32 characters.');
+    for (const field of ['telnyxCredentialId','telnyxSipUsername']) {
+      const values = config.auth.agents.filter(a => a.role !== 'viewer').map(a => a[field]).filter(Boolean);
+      if (new Set(values).size !== values.length) fatal.push(`Each agent needs a distinct ${field}.`);
+    }
     if (config.transcription.provider !== 'assemblyai') fatal.push('Telnyx voice requires TRANSCRIPTION_PROVIDER=assemblyai.');
     for (const agent of config.auth.agents.filter(a => a.role !== 'viewer')) if (!agent.telnyxCredentialId || !agent.telnyxSipUsername) fatal.push(`Telnyx WebRTC mapping missing for ${agent.identity}.`);
   }
@@ -33,6 +37,8 @@ export function validateEnv({ exitOnFatal = true } = {}) {
   if (isProd && (config.voiceProvider === 'twilio' || config.messaging.enabled) && !process.env.TWILIO_AUTH_TOKEN) fatal.push('TWILIO_AUTH_TOKEN is required to authenticate provider webhooks.');
   if (config.witnext.enabled && !config.witnext.integrationId) fatal.push('WITNEXT_INTEGRATION_ID is required by the WiTnext receiver.');
   if (isProd && config.emailIntake.enabled && !config.emailIntake.token) fatal.push('EMAIL_INBOUND_TOKEN is required when email intake is enabled.');
+
+  if (isProd && config.auth.twoFactor.enabled && (!config.auth.twoFactor.verifyServiceSid || !config.twilio.accountSid || !config.twilio.apiKeySid || !config.twilio.apiKeySecret)) fatal.push('Twilio Verify credentials are required while TWO_FACTOR_ENABLED=true; voice-provider migration must not disable MFA.');
 
   // ── Security-critical (fatal in production) ──
   if (!config.auth.required) {

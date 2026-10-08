@@ -44,7 +44,7 @@ instructions there still apply. Use one application instance for this pilot.
    Do not reuse one credential for several agents. Example (synthetic values):
 
    ```json
-   [{"email":"agent@example.com","identity":"agent-one","role":"admin","name":"Pilot Agent","mfaPhone":"+12025550101","telnyxCredentialId":"credential-id","telnyxSipUsername":"gencredUsername"}]
+   [{"email":"agent@example.com","identity":"agent-one","role":"admin","name":"Pilot Agent","mfaChannel":"sms","phone":"+12025550101","telnyxCredentialId":"credential-id","telnyxSipUsername":"gencredUsername"}]
    ```
 
    Keep the existing MFA fields for your directory format (see `.env.example`).
@@ -105,7 +105,8 @@ enables provider-side deletion when the configured recording retention expires.
 - Administrators can edit all calls. Handling agents, the assigned owner, and
   eligible route targets on unanswered calls can access their calls. Viewers are
   read-only. Assignment grants the new owner access; it does not revoke the
-  original handling agent's historical access.
+  handling agent's historical access. Actual voice transfers update the active
+  handling agent; the individual legs remain in the call audit history.
 - Add/remove labels in Assignment & tags; replacing a label edits it on that call.
   Filter history by owner and exact tag (case-insensitive). Tags do not grant access.
 - Concurrent edits return a conflict. Use Reload saved assignment & tags to

@@ -144,8 +144,8 @@ function wireCall(call, incoming = false) {
   state.callSid = call.customParameters?.get('rootCallSid') || call.parameters.CallSid || null;
   call.on('accept', () => {
     state.callSid = call.customParameters?.get('rootCallSid') || call.parameters.CallSid;
-    state.started = Date.now(); $('incoming').hidden = true;
-    $('controlStatus').textContent = 'Connected. Keypad buttons send touch tones during the call.';
+    state.started = state.me.provider === 'telnyx' ? null : Date.now(); $('incoming').hidden = true;
+    $('controlStatus').textContent = state.me.provider === 'telnyx' ? 'Phone audio connected. Waiting for the other participant…' : 'Connected. Keypad buttons send touch tones during the call.';
     updateControls(); presence();
     if (state.callSid) selectCall(state.callSid).catch(e => toast(e.message));
   });
@@ -217,7 +217,7 @@ function connectWS() {
   socket.onmessage = event => {
     let message; try { message = JSON.parse(event.data); } catch { return; }
     if (message.type === 'message') { if (state.view === 'messages') requestRefresh(); return; }
-    if (message.type === 'call_status') { if (message.callSid === state.pendingOutgoing && ['completed','missed','failed','abandoned'].includes(message.status)) { state.pendingOutgoing = null; updateControls(); } requestRefresh(); return; }
+    if (message.type === 'call_status') { if (message.callSid === state.callSid && message.status === 'in_progress') { state.started ||= Date.now(); $('controlStatus').textContent = 'Connected. Keypad buttons send touch tones during the call.'; } if (message.callSid === state.pendingOutgoing && ['completed','missed','failed','abandoned'].includes(message.status)) { state.pendingOutgoing = null; updateControls(); } requestRefresh(); return; }
     // Do not replace a different call's transcript or customer card.
     if (message.callSid !== state.selectedSid) return;
     if (message.type === 'screenpop') {
@@ -306,7 +306,7 @@ $('organizationForm').onsubmit = async event => {
 
 $('enable').onclick = enablePhone;
 $('presence').onchange = presence;
-$('microphone').onchange = async () => { try { if (state.me.provider === 'telnyx') { state.device.client.audioConstraints = { deviceId: { exact: $('microphone').value } }; if (state.call) await state.call.raw.setAudioInDevice($('microphone').value); } else await state.device.audio.setInputDevice($('microphone').value); } catch(e) { toast(e.message); } };
+$('microphone').onchange = async () => { try { if (state.me.provider === 'telnyx') { await state.device.client.setAudioSettings({ micId: $('microphone').value }); if (state.call) await state.call.raw.setAudioInDevice($('microphone').value); } else await state.device.audio.setInputDevice($('microphone').value); } catch(e) { toast(e.message); } };
 $('speaker').onchange = async () => { try { if (state.me.provider === 'telnyx') await $('telnyxAudio').setSinkId($('speaker').value); else { await state.device.audio.speakerDevices.set($('speaker').value); await state.device.audio.ringtoneDevices.set($('speaker').value); } } catch(e) { toast(e.message); } };
 $('notifications').onclick = async () => { if ('Notification' in window) toast(`Call notifications: ${await Notification.requestPermission()}`); else toast('Browser notifications are unavailable.'); };
 $('dialForm').onsubmit = async event => {

@@ -8,6 +8,8 @@ const baseEnv = {
   DATABASE_URL: 'postgresql://test:test@127.0.0.1:1/not_a_real_database?connect_timeout=1',
   PUBLIC_BASE_URL: 'https://voice.example.test', SESSION_SECRET: 'synthetic-test-secret',
   GOOGLE_CLIENT_ID: 'test-id', GOOGLE_CLIENT_SECRET: 'test-secret',
+  TWILIO_ACCOUNT_SID: 'AC' + '1'.repeat(32), TWILIO_API_KEY_SID: 'SK' + '2'.repeat(32),
+  TWILIO_API_KEY_SECRET: 'synthetic-test-key', TWILIO_VERIFY_SERVICE_SID: 'VA' + '3'.repeat(32),
   TWILIO_AUTH_TOKEN: 'test-token', EMAIL_INBOUND_TOKEN: 'test-email-token',
   AGENT_DIRECTORY: '[{"email":"agent@example.test","identity":"agent","role":"agent"}]',
   VOICE_ROUTING_JSON: '', WITNEXT_URL: '', WITNEXT_INTEGRATION_SECRET: '',
@@ -30,5 +32,12 @@ test('Render startup does not serve a partially configured app after a migration
   const result = start();
   assert.equal(result.status, 1);
   assert.match(result.output, /Database migration did not complete/);
+  assert.doesNotMatch(result.output, /telephony running/);
+});
+
+test('production cannot silently disable the configured MFA service', () => {
+  const result = start({ TWILIO_VERIFY_SERVICE_SID: '' });
+  assert.equal(result.status, 1);
+  assert.match(result.output, /Verify credentials are required/);
   assert.doesNotMatch(result.output, /telephony running/);
 });

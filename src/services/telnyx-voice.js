@@ -6,6 +6,7 @@ import { createCall, loadCall, callPayload } from './call-state.js';
 import { selectTargets } from './routing.js';
 import { enqueueJob } from '../jobs/queue.js';
 import { emitWitnextEvent } from '../integrations/witnext.js';
+import { getSession } from '../realtime/sessions.js';
 import { publishToAgent } from '../realtime/bus.js';
 import { mediaEvents, streamTicket, setTranscriptionState } from '../realtime/transcription.js';
 
@@ -211,6 +212,8 @@ export async function handleTelnyxEvent(event) {
     await tx.query('UPDATE calls SET provider_state=$2,updated_at=now() WHERE twilio_call_sid=$1', [root, JSON.stringify(s)]);
   });
   const current = await loadCall(root);
+  const session = getSession(root);
+  if (session && current?.agent_identity) session.identity = current.agent_identity;
   if (current?.ended_at || event.event_type === 'streaming.stopped') mediaEvents.emit('stop', root);
   if (event.event_type === 'streaming.failed') await setTranscriptionState(root, 'error', 'telnyx_stream_failed');
   for (const identity of new Set([current?.agent_identity, current?.assigned_to, ...(current?.route_targets || [])].filter(Boolean))) {
