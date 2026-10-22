@@ -22,7 +22,11 @@ import { adminRouter } from "./routes/admin.js";
 import { telnyxRouter } from './routes/telnyx.js';
 import { handleTelnyxEvent, runTelnyxStart, startTelnyxMedia, expireTelnyxSetup, stopTelnyxLeg } from './services/telnyx-voice.js';
 import { phoneRouter } from './routes/phone.js';
+import { tagRoutingRouter } from './routes/tag-routing.js';
+import { collaborationRouter } from './routes/collaboration.js';
+import { attachCollaborationWss } from './realtime/collaboration.js';
 import { runPostCall } from './services/post-call.js';
+import { gradeCallExperience } from './services/call-experience.js';
 import { startWorker } from './jobs/queue.js';
 import { onCallComplete, doScreenPop } from './realtime/orchestrator.js';
 import { sendWitnextEvent } from './integrations/witnext.js';
@@ -102,7 +106,7 @@ app.use((req, res, next) => {
 });
 
 // Admin console page — requires the admin role (falls through to static on pass).
-app.get("/admin.html", pageGate, (req, res, next) => {
+app.get(["/admin.html", "/routing.html"], pageGate, (req, res, next) => {
   if (!req.agent || !roleAtLeast(req.agent.role, "admin")) return res.redirect("/agent.html");
   next();
 });
@@ -154,6 +158,8 @@ app.use(aiRouter);
 app.use(crmRouter); // authenticated CRM API + public tracker API
 app.use(adminRouter); // admin console API (status, DLQ, audit — admin-only inside)
 app.use(phoneRouter);
+app.use(tagRoutingRouter);
+app.use(collaborationRouter);
 app.use(messagingRouter); // agent send + conversation list (requireAuth + CSRF inside)
 
 // Webhooks. Twilio routes are signature-validated above; email intake uses an
@@ -180,9 +186,11 @@ loadRevocations().catch(() => {});
 await recoverInterruptedStreams();
 const server = http.createServer(app);
 attachAgentWss(server);
+const collaboration = attachCollaborationWss(server);
 const media = attachMediaWss(server);
 const stopVoiceWorker = startWorker({ telnyxEvent: handleTelnyxEvent, telnyxStart: runTelnyxStart, telnyxMedia: startTelnyxMedia, telnyxTimeout: expireTelnyxSetup, telnyxHangup: stopTelnyxLeg }, 100);
 const stopWorker = startWorker({
+  experience: gradeCallExperience,
   recap: ({ callSid }) => onCallComplete(callSid),
   screenPop: ({ callSid }) => doScreenPop(callSid),
   dialpadTranscript: hydrateDialpadTranscript,
@@ -194,6 +202,7 @@ const stopWorker = startWorker({
 });
 process.on('SIGTERM', async () => {
   stopWorker(); stopVoiceWorker();
+  collaboration.close();
   const deadline = setTimeout(() => process.exit(0), 10000);
   deadline.unref();
   await media.close();

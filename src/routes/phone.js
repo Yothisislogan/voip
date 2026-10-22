@@ -49,10 +49,30 @@ phoneRouter.use('/api/phone', requireAuth, csrfProtect, (_req, res, next) => {
 phoneRouter.get('/api/phone/config', (req, res) => res.json({
   identity: req.agent.identity, role: req.agent.role,
   provider: config.voiceProvider,
+  collaborationEnabled: config.collaboration.enabled,
+  experienceEnabled: config.experience.enabled,
+  tagRoutingEnabled: config.voice.tagRoutingEnabled,
   calling: (config.voiceProvider === 'telnyx' ? telnyxReady() && !!config.auth.agents.find(a => a.identity === req.agent.identity)?.telnyxCredentialId : !!(client && config.twilio.twimlAppSid && config.twilio.callerId)) && req.agent.role !== 'viewer',
   dispositions: DISPOSITIONS,
   agents: config.auth.agents.filter(a => a.role !== 'viewer').map(a => ({ identity: a.identity, name: a.name || a.identity })),
   capabilities: { mute: true, dtmf: true, inboundBlindTransfer: true, hold: false, warmTransfer: false, conference: false },
+}));
+
+phoneRouter.get('/api/phone/experience-summary', requireRole('admin'), asyncRoute(async (_req, res) => {
+  const row = (await db.query(`SELECT count(*)::int AS total,
+    count(*) FILTER(WHERE e.state='ready')::int AS assessed,
+    count(e.csat)::int AS csat_count, round(avg(e.csat),2)::float AS csat_average,
+    count(e.recommendation)::int AS recommendation_count,
+    count(*) FILTER(WHERE e.recommendation>=9)::int AS promoters,
+    count(*) FILTER(WHERE e.recommendation BETWEEN 7 AND 8)::int AS passives,
+    count(*) FILTER(WHERE e.recommendation<=6)::int AS detractors
+    FROM calls c LEFT JOIN call_experience e ON e.call_sid=c.twilio_call_sid
+    WHERE c.ended_at>now()-interval '30 days' AND NOT c.is_voicemail`)).rows[0];
+  res.json({ periodDays:30, predicted:true, assessed:row.assessed, csatCount:row.csat_count,
+    csatAverage:row.csat_average, recommendationCount:row.recommendation_count,
+    promoters:row.promoters, passives:row.passives, detractors:row.detractors,
+    projectedNps:row.recommendation_count ? Math.round(100*(row.promoters-row.detractors)/row.recommendation_count) : null,
+    unscored:row.total-row.assessed });
 }));
 
 phoneRouter.post('/api/phone/presence', requireRole('agent'), asyncRoute(async (req, res) => {
@@ -107,7 +127,15 @@ phoneRouter.get('/api/phone/calls/:sid', asyncRoute(async (req, res) => {
   const recordings = (await db.query('SELECT recording_sid,kind,status,duration_seconds FROM call_recordings WHERE call_sid=$1 ORDER BY created_at', [sid])).rows;
   const candidates = req.call.source_number && req.call.identity_state !== 'matched' ? await findLeadCandidates(req.call) : [];
   audit({ req, action: 'call.view', entityType: 'call', entityId: sid });
-  res.json({ call: req.call, segments, recordings, candidates });
+  const experience = (await db.query('SELECT * FROM call_experience WHERE call_sid=$1', [sid])).rows[0] || null;
+  res.json({ call: req.call, segments, recordings, candidates, experience });
+}));
+phoneRouter.post('/api/phone/calls/:sid/experience', requireRole('agent'), asyncRoute(async (req, res) => {
+  if (!config.experience.enabled) return res.status(409).json({ error: 'Customer experience scoring is not enabled yet' });
+  if (!req.call.ended_at) return res.status(409).json({ error: 'Finish the call before scoring it' });
+  await enqueueJob('experience', `experience:${req.call.twilio_call_sid}`, { callSid: req.call.twilio_call_sid, force: true }, { refresh: true });
+  audit({ req, action: 'call.experience_requested', entityType: 'call', entityId: req.call.twilio_call_sid });
+  res.status(202).json({ queued: true });
 }));
 phoneRouter.patch('/api/phone/calls/:sid/organization', requireRole('agent'), asyncRoute(async (req, res) => {
   const before = { owner: req.call.assigned_to, tags: req.call.tags };

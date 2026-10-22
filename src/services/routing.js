@@ -1,5 +1,7 @@
 import { db } from '../db.js';
 import { config } from '../config.js';
+import { callerPhone, chooseTagRule } from './tag-routing.js';
+import { collaborationHub } from '../realtime/collaboration.js';
 
 export function validateRouting(route) {
   if (!route) return [];
@@ -39,30 +41,72 @@ export function orderAgents(agents, strategy) {
   return agents;
 }
 
-export async function selectTargets(callSid, now = new Date()) {
+const ringTime = route => Math.max(5, Math.min(60, Number(route?.ringSeconds) || 20));
+async function availableTargets(tx, identities, exclude = []) {
+  const { rows } = await tx.query(`SELECT * FROM agent_presence WHERE identity=ANY($1::text[])
+    AND NOT(identity=ANY($2::text[])) AND status='available' AND heartbeat_at>now()-interval '75 seconds'
+    AND (reserved_until IS NULL OR reserved_until<now())
+    AND NOT EXISTS(SELECT 1 FROM calls c WHERE c.agent_identity=agent_presence.identity AND c.status='in_progress')`, [identities, exclude]);
+  return identities.map(id => rows.find(a => a.identity === id)).filter(a => a && !collaborationHub.busy(a.identity));
+}
+function normalTargets(rows, route) {
+  const sorted = orderAgents(rows, route?.strategy);
+  return (!route?.strategy || route.strategy === 'simultaneous' ? sorted : sorted.slice(0,1)).map(a => a.identity);
+}
+async function reserve(tx, callSid, targets, timeout) {
+  if (targets.length) await tx.query(`UPDATE agent_presence SET reserved_call_sid=$1,
+    reserved_until=now()+$3 * interval '1 second',last_offered_at=now() WHERE identity=ANY($2::text[])`, [callSid,targets,timeout+15]);
+}
+
+export async function selectTargets(callSid, now = new Date(), { from } = {}) {
   const route = config.voice.routing;
-  if (!route) return { targets: [config.defaultAgentIdentity], reason: 'default', timeout: 20 };
-  if (validateRouting(route).length) throw new Error('Invalid voice routing configuration');
+  if (!route && !config.voice.tagRoutingEnabled && !config.collaboration.enabled) return { targets: collaborationHub.busy(config.defaultAgentIdentity) ? [] : [config.defaultAgentIdentity], reason: 'default', timeout: 20 };
+  if (route && validateRouting(route).length) throw new Error('Invalid voice routing configuration');
   if (!isOpen(route, now)) return { targets: [], reason: 'closed', timeout: 20 };
   if (!db.enabled) return { targets: [], reason: 'unavailable', timeout: 20 };
   return db.transaction(async tx => {
-    // Serialize offers, including across app processes: two calls cannot reserve
-    // the same available agent between selection and reservation.
-    await tx.query("SELECT pg_advisory_xact_lock(7170701)");
-    const existing = await tx.query('SELECT route_targets,routing_decided_at FROM calls WHERE twilio_call_sid=$1', [callSid]);
-    if (existing.rows[0]?.routing_decided_at) return { targets: existing.rows[0].route_targets, reason: 'retry', timeout: Math.max(5, Math.min(60, Number(route.ringSeconds) || 20)) };
-    const { rows } = await tx.query(`SELECT * FROM agent_presence WHERE identity=ANY($1::text[])
-      AND status='available' AND heartbeat_at>now()-interval '75 seconds'
-      AND (reserved_until IS NULL OR reserved_until<now())
-      AND NOT EXISTS(SELECT 1 FROM calls c WHERE c.agent_identity=agent_presence.identity AND c.status='in_progress')`, [route.agents]);
-    const fixed = route.agents.map(id => rows.find(a => a.identity === id)).filter(Boolean);
-    const available = orderAgents(fixed, route.strategy);
-    const targets = (route.strategy === 'simultaneous' || !route.strategy ? available : available.slice(0, 1)).map(a => a.identity);
-    const timeout = Math.max(5, Math.min(60, Number(route.ringSeconds) || 20));
-    if (targets.length) await tx.query(`UPDATE agent_presence SET reserved_call_sid=$1,
-      reserved_until=now()+$3 * interval '1 second',last_offered_at=now() WHERE identity=ANY($2::text[])`, [callSid, targets, timeout + 15]);
-    await tx.query(`INSERT INTO calls(twilio_call_sid,route_targets,routing_decided_at,status) VALUES($1,$2,now(),'queued')
-      ON CONFLICT(twilio_call_sid) DO UPDATE SET route_targets=$2,routing_decided_at=now()`, [callSid, JSON.stringify(targets)]);
-    return { targets, reason: targets.length ? 'open' : 'unavailable', timeout };
+    await tx.query("INSERT INTO calls(twilio_call_sid,status) VALUES($1,'queued') ON CONFLICT DO NOTHING", [callSid]);
+    // Every path takes the call row before the shared reservation lock.
+    const call = (await tx.query('SELECT * FROM calls WHERE twilio_call_sid=$1 FOR UPDATE', [callSid])).rows[0];
+    await tx.query('SELECT pg_advisory_xact_lock(7170701)');
+    if (call.routing_decided_at) return { targets: call.route_targets, reason: 'retry', timeout: call.routing_plan?.timeout || ringTime(route) };
+    const normal = route?.agents || [config.defaultAgentIdentity];
+    const eligible = config.auth.agents.filter(a => a.role !== 'viewer').map(a => a.identity);
+    let tags = [], rules = [];
+    if (config.voice.tagRoutingEnabled) {
+      let phone; try { phone = callerPhone(call.customer_number || from); } catch { /* Unknown/shared caller: normal route. */ }
+      if (phone) tags = (await tx.query('SELECT tags FROM caller_routing_tags WHERE phone=$1', [phone])).rows[0]?.tags || [];
+      if (tags.length) rules = (await tx.query('SELECT * FROM tag_routing_rules WHERE enabled AND tag=ANY($1::text[])', [tags.map(t => t.toLowerCase())])).rows;
+    }
+    const identities = [...new Set([...normal,...rules.map(r => r.preferred_agent)])].filter(id => eligible.includes(id));
+    const available = await availableTargets(tx, identities);
+    const preferred = chooseTagRule(tags, rules, available.map(a => a.identity));
+    const targets = preferred ? [preferred.preferred_agent] : normalTargets(available.filter(a => normal.includes(a.identity)), route);
+    const timeout = preferred ? preferred.ring_seconds : ringTime(route);
+    const plan = { stage: preferred ? 'preferred' : 'normal', preferred: preferred?.preferred_agent || null,
+      matchedTag: preferred?.label || null, normal, timeout, fallbackTimeout: ringTime(route) };
+    await reserve(tx, callSid, targets, timeout);
+    await tx.query(`UPDATE calls SET route_targets=$2,routing_decided_at=now(),routing_plan=$3 WHERE twilio_call_sid=$1`,
+      [callSid, JSON.stringify(targets), JSON.stringify(plan)]);
+    return { targets, reason: preferred ? 'tag' : targets.length ? 'open' : 'unavailable', timeout };
   });
+}
+
+// Called once the preferred ring attempt ends without an answer. The provider
+// holds the call-row lock; this reservation decision commits with its next legs.
+export async function fallbackTargets(callSid, tx, now = new Date()) {
+  const call = (await tx.query('SELECT * FROM calls WHERE twilio_call_sid=$1 FOR UPDATE', [callSid])).rows[0];
+  const plan = call?.routing_plan;
+  if (!call || call.ended_at || plan?.stage !== 'preferred') return null;
+  await tx.query('SELECT pg_advisory_xact_lock(7170701)');
+  await tx.query('UPDATE agent_presence SET reserved_call_sid=NULL,reserved_until=NULL WHERE reserved_call_sid=$1', [callSid]);
+  const eligible = config.auth.agents.filter(a => a.role !== 'viewer').map(a => a.identity);
+  const identities = (plan.normal || []).filter(id => id !== plan.preferred && eligible.includes(id));
+  const available = isOpen(config.voice.routing, now) ? await availableTargets(tx, identities) : [];
+  const targets = normalTargets(available, config.voice.routing);
+  const timeout = plan.fallbackTimeout || 20;
+  await reserve(tx, callSid, targets, timeout);
+  await tx.query(`UPDATE calls SET routing_plan=$2,route_targets=$3,agent_identity=NULL WHERE twilio_call_sid=$1`,
+    [callSid, JSON.stringify({ ...plan, stage: 'fallback', timeout }), JSON.stringify(targets)]);
+  return { targets, timeout };
 }

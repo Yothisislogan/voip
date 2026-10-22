@@ -3,14 +3,14 @@
 const $ = id => document.getElementById(id);
 const state = { me: null, device: null, registered: false, call: null, callSid: null, selectedSid: null,
   selected: null, calls: [], view: 'calls', offset: 0, muted: false, started: null, conversation: null,
-  drafts: new Map(), organizationDrafts: new Map(), pendingOutgoing: null, dialing: false, sending: false, messageAttempt: null, conversations: [], ws: null, reconnect: 0, closing: false, loading: false };
+  drafts: new Map(), organizationDrafts: new Map(), internalBusy: false, pendingOutgoing: null, dialing: false, sending: false, messageAttempt: null, conversations: [], ws: null, reconnect: 0, closing: false, loading: false };
 let toastTimer, refreshTimer;
 const csrf = () => decodeURIComponent(document.cookie.split(';').map(x => x.trim()).find(x => x.startsWith('wit_csrf='))?.split('=')[1] || '');
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6500); }
 async function api(path, options = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...options,
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf(), ...options.headers } });
-  if (response.status === 401) { state.closing = true; state.device?.destroy(); location.href = '/login'; throw new Error('Session expired'); }
+  if (response.status === 401) { state.closing = true; window.WitFeatures?.close(); state.device?.destroy(); location.href = '/login'; throw new Error('Session expired'); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
@@ -83,6 +83,7 @@ async function selectCall(sid) {
   const detail = await api(`/api/phone/calls/${encodeURIComponent(sid)}`);
   if (state.selectedSid !== sid) return;
   state.selected = detail;
+  window.WitFeatures?.render(detail);
   const c = detail.call;
   const listed = state.calls.find(x => x.twilio_call_sid === sid);
   $('customer').textContent = listed?.customer_name || c.customer_number || (c.source_number ? 'SmartFinancial transfer' : c.from_e164 || 'Call details');
@@ -118,7 +119,7 @@ async function selectCall(sid) {
 
 function updateControls() {
   const connected = state.call && state.call.status() === 'open';
-  $('call').disabled = !state.registered || !!state.call || state.dialing || !!state.pendingOutgoing;
+  $('call').disabled = !state.registered || !!state.call || state.dialing || !!state.pendingOutgoing || state.internalBusy;
   $('enable').disabled = !state.me?.calling || !!state.call || state.dialing;
   $('end').disabled = !state.call && !state.pendingOutgoing;
   $('mute').disabled = !connected;
@@ -126,8 +127,8 @@ function updateControls() {
   $('mute').textContent = state.muted ? 'Unmute microphone' : 'Mute microphone';
 }
 async function presence() {
-  if (!state.me || state.me.role === 'viewer') return;
-  try { await post('/api/phone/presence', { status: !state.registered ? 'offline' : state.call ? 'busy' : $('presence').value }); }
+  if (!state.me || state.closing || state.me.role === 'viewer') return;
+  try { await post('/api/phone/presence', { status: state.internalBusy ? 'busy' : !state.registered ? 'offline' : state.call ? 'busy' : $('presence').value }); }
   catch (error) { $('connection').textContent = `Availability update failed: ${error.message}`; }
 }
 async function freshToken() { return (await api('/token')).token; }
@@ -196,7 +197,7 @@ async function enablePhone() {
     device.on('incoming', async call => {
       const root = call.customParameters?.get('rootCallSid');
       const outgoing = state.pendingOutgoing && root === state.pendingOutgoing;
-      if (state.call || (!outgoing && (state.dialing || $('presence').value !== 'available'))) { call.reject(); return; }
+      if (state.internalBusy || state.call || (!outgoing && (state.dialing || $('presence').value !== 'available'))) { call.reject(); return; }
       wireCall(call, !outgoing);
       if (!root && call.raw?.telnyxIDs?.telnyxCallControlId) {
         try { const result = await api(`/api/phone/resolve?control=${encodeURIComponent(call.raw.telnyxIDs.telnyxCallControlId)}`); call.parameters.CallSid = result.callSid; state.callSid = result.callSid; await selectCall(result.callSid); } catch { /* History remains available if the event is still arriving. */ }
@@ -220,6 +221,7 @@ function connectWS() {
     if (message.type === 'call_status') { if (message.callSid === state.callSid && message.status === 'in_progress') { state.started ||= Date.now(); $('controlStatus').textContent = 'Connected. Keypad buttons send touch tones during the call.'; } if (message.callSid === state.pendingOutgoing && ['completed','missed','failed','abandoned'].includes(message.status)) { state.pendingOutgoing = null; updateControls(); } requestRefresh(); return; }
     // Do not replace a different call's transcript or customer card.
     if (message.callSid !== state.selectedSid) return;
+    if (message.type === 'experience') { selectCall(message.callSid).catch(e => toast(e.message)); return; }
     if (message.type === 'screenpop') {
       if (message.contact?.fullName) $('customer').textContent = message.contact.fullName;
       if (message.phone) $('customerMeta').textContent = message.phone;
@@ -310,7 +312,7 @@ $('microphone').onchange = async () => { try { if (state.me.provider === 'telnyx
 $('speaker').onchange = async () => { try { if (state.me.provider === 'telnyx') await $('telnyxAudio').setSinkId($('speaker').value); else { await state.device.audio.speakerDevices.set($('speaker').value); await state.device.audio.ringtoneDevices.set($('speaker').value); } } catch(e) { toast(e.message); } };
 $('notifications').onclick = async () => { if ('Notification' in window) toast(`Call notifications: ${await Notification.requestPermission()}`); else toast('Browser notifications are unavailable.'); };
 $('dialForm').onsubmit = async event => {
-  event.preventDefault(); if (!state.device || !state.registered || state.call || state.dialing) return;
+  event.preventDefault(); if (!state.device || !state.registered || state.call || state.dialing || state.pendingOutgoing || state.internalBusy) return;
   const to = $('number').value.trim(); if (!to) return toast('Enter a phone number.');
   state.dialing = true; updateControls();
   try { if (state.me.provider === 'telnyx') { const result = await api('/api/phone/dial', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ to }) }); state.pendingOutgoing = result.callSid; state.callSid = result.callSid; await selectCall(result.callSid); } else wireCall(await state.device.connect({ params: { To: to } })); $('controlStatus').textContent = `Calling ${to}…`; }
@@ -361,14 +363,14 @@ $('messageForm').onsubmit = async event => {
   } catch(e) { $('messageStatus').textContent = `Send not confirmed: ${e.message}`; }
   finally { state.sending = false; $('sendMessage').disabled = false; }
 };
-$('logoutForm').onsubmit = async event => { event.preventDefault(); await post('/logout', {}).catch(() => {}); state.closing = true; state.device?.destroy(); location.href = '/login'; };
+$('logoutForm').onsubmit = async event => { event.preventDefault(); await post('/logout', {}).catch(() => {}); state.closing = true; window.WitFeatures?.close(); state.device?.destroy(); location.href = '/login'; };
 $('refresh').onclick = () => loadHistory(); $('more').onclick = () => loadHistory(true);
 $('search').oninput = requestRefresh; $('tagFilter').oninput = requestRefresh; $('ownerFilter').onchange = requestRefresh;
 $('refreshOps').onclick = operations;
 document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => { state.view = button.dataset.view; document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-selected', String(b === button))); loadHistory(); });
 setInterval(presence, 25000);
 setInterval(() => { if (state.started) { const seconds = Math.floor((Date.now() - state.started) / 1000); $('timer').textContent = `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`; } }, 1000);
-window.addEventListener('beforeunload', event => { if (state.call || state.pendingOutgoing || state.drafts.size || state.organizationDrafts.size) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('beforeunload', event => { if (state.call || state.pendingOutgoing || state.drafts.size || state.organizationDrafts.size || window.WitFeatures?.busy() || window.WitFeatures?.hasDraft()) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('online', () => { toast('Network restored. Check phone connection.'); requestRefresh(); });
 (async () => {
   try {
@@ -379,6 +381,9 @@ window.addEventListener('online', () => { toast('Network restored. Check phone c
     for (const value of state.me.dispositions) { const option = node('option', pretty(value)); option.value = value; $('disposition').append(option); }
     for (const agent of state.me.agents) if (agent.identity !== state.me.identity) { const option = node('option', agent.name); option.value = agent.identity; $('transferTarget').append(option); }
     for (const agent of state.me.agents) for (const id of ['callOwner','ownerFilter']) { const option = node('option', agent.name); option.value = agent.identity; $(id).append(option); }
+    await window.WitFeatures?.init({ me: state.me, api, post, toast,
+      isPhoneBusy: () => !!(state.call || state.pendingOutgoing || state.dialing),
+      setInternalBusy: value => { state.internalBusy = value; updateControls(); presence(); } });
     await loadHistory(); connectWS(); operations();
     const call = new URLSearchParams(location.search).get('call'); if (call) await selectCall(call);
   } catch(e) { $('historyStatus').textContent = e.message; $('deviceStatus').textContent = 'Setup required'; toast(e.message); }

@@ -1,12 +1,13 @@
 import { config } from "../../config.js";
 import { rulesStructuredCompletion } from "./rules.js";
+import { experienceSchema, validExperience } from '../experience-schema.js';
 
 /**
  * Local Ollama provider for CPU-friendly coaching and recap.
  * Uses Node 18+ global fetch and AbortController; no extra package required.
  */
 export async function ollamaStructuredCompletion(args) {
-  const fallback = rulesStructuredCompletion(args);
+  const fallback = args.schemaName === 'call_experience' ? null : rulesStructuredCompletion(args);
   const baseUrl = (config.llm.ollama.baseUrl || "").replace(/\/$/, "");
   const model = modelFor(args.schemaName);
 
@@ -63,12 +64,12 @@ export async function ollamaStructuredCompletion(args) {
 }
 
 function modelFor(schemaName) {
-  if (schemaName === "call_recap") return config.llm.ollama.recapModel || config.llm.ollama.model;
+  if (['call_recap','call_experience'].includes(schemaName)) return config.llm.ollama.recapModel || config.llm.ollama.model;
   return config.llm.ollama.coachingModel || config.llm.ollama.model;
 }
 
 function timeoutFor(schemaName) {
-  if (schemaName === "call_recap") return config.llm.ollama.recapTimeoutMs;
+  if (['call_recap','call_experience'].includes(schemaName)) return config.llm.ollama.recapTimeoutMs;
   return config.llm.timeoutMs;
 }
 
@@ -90,6 +91,7 @@ function parseJson(raw) {
 }
 
 function validateShape(value, schemaName) {
+  if (schemaName === 'call_experience') return validExperience(value);
   if (!value || typeof value !== "object") return false;
   if (schemaName === "call_recap") {
     return (
@@ -109,6 +111,7 @@ function validateShape(value, schemaName) {
 }
 
 function schemaHint(schemaName) {
+  if (schemaName === 'call_experience') return JSON.stringify(experienceSchema);
   if (schemaName === "call_recap") {
     return JSON.stringify(
       {

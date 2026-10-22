@@ -28,7 +28,7 @@ export function verifyStreamTicket(callSid, ticket) {
 }
 
 export function startTranscription(twiml, callSid) {
-  if (!config.publicBaseUrl || (!config.coachingEnabled && !config.recapEnabled)) return;
+  if (!config.publicBaseUrl || (!config.coachingEnabled && !config.recapEnabled && !config.experience.enabled)) return;
   if (config.transcription.provider === 'assemblyai') {
     const stream = twiml.start().stream({ name: 'wit-assemblyai', track: 'both_tracks',
       url: webhookUrl(MEDIA_PATH).replace(/^https:/, 'wss:'),

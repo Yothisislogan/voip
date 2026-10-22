@@ -3,7 +3,8 @@ import { db } from '../db.js';
 import { config, webhookUrl } from '../config.js';
 import { telnyxCommand, sipDestination, telnyxRequest } from '../providers/telnyx.js';
 import { createCall, loadCall, callPayload } from './call-state.js';
-import { selectTargets } from './routing.js';
+import { selectTargets, fallbackTargets } from './routing.js';
+import { collaborationHub } from '../realtime/collaboration.js';
 import { enqueueJob } from '../jobs/queue.js';
 import { emitWitnextEvent } from '../integrations/witnext.js';
 import { getSession } from '../realtime/sessions.js';
@@ -46,11 +47,14 @@ export async function startTelnyxOutbound(identity, to, requestId) {
   await db.transaction(async tx => {
     // Agent lock serializes clicks with different idempotency keys as well.
     await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`telnyx-dial:${identity}`]);
+    await tx.query('SELECT pg_advisory_xact_lock(7170701)');
     const prior = (await tx.query('SELECT 1 FROM calls WHERE twilio_call_sid=$1', [root])).rows.length;
     if (prior) return;
+    if (collaborationHub.busy(identity)) throw Object.assign(new Error('End your internal call first'), { status: 409 });
     const busy = (await tx.query(`SELECT 1 FROM calls WHERE agent_identity=$1 AND provider='telnyx'
       AND ended_at IS NULL AND created_at>now()-interval '4 hours' LIMIT 1`, [identity])).rows.length;
-    if (busy) throw Object.assign(new Error('You already have an active or pending call'), { status: 409 });
+    const reserved = (await tx.query('SELECT 1 FROM agent_presence WHERE identity=$1 AND reserved_until>now()', [identity])).rows.length;
+    if (busy || reserved) throw Object.assign(new Error('You already have an active or pending call'), { status: 409 });
     await tx.query(`INSERT INTO calls(twilio_call_sid,direction,from_e164,to_e164,customer_number,agent_identity,assigned_to,status,provider)
       VALUES($1,'outbound',$2,$3,$3,$4,$4,'queued','telnyx')`, [root, config.telnyx.callerId, to, identity]);
     await enqueueJob('telnyxStart', `telnyx-start:${root}`, { root }, { connection: tx });
@@ -70,14 +74,14 @@ export async function runTelnyxStart({ root }) {
 async function prepareInbound(payload) {
   if (payload.connection_id !== config.telnyx.connectionId || payload.direction !== 'incoming' || payload.to !== config.telnyx.callerId) return null;
   const root = `tn_${payload.call_session_id}`;
-  const route = await selectTargets(root);
+  const route = await selectTargets(root, new Date(), { from: payload.from });
   await createCall({ callSid: root, direction: 'inbound', from: payload.from, to: payload.to, targets: route.targets });
   await db.query(`UPDATE calls SET provider='telnyx',provider_session_id=$2,
     provider_state=CASE WHEN provider_state='{}' THEN $3::jsonb ELSE provider_state END WHERE twilio_call_sid=$1`,
   [root, payload.call_session_id, JSON.stringify({ phase: 'new', customer: payload.call_control_id, generation: 0, timeout: route.timeout })]);
   await db.query(`INSERT INTO call_legs(sid,call_sid,status,provider,control_id,purpose) VALUES($1,$2,'queued','telnyx',$3,'customer') ON CONFLICT DO NOTHING`,
     [payload.call_leg_id, root, payload.call_control_id]);
-  await enqueueJob('telnyxTimeout', `telnyx-timeout:${root}`, { root }, { delayMs: 90000 });
+  await enqueueJob('telnyxTimeout', `telnyx-timeout:${root}`, { root }, { delayMs: config.voice.tagRoutingEnabled ? 180000 : 90000 });
   return root;
 }
 
@@ -195,7 +199,14 @@ export async function handleTelnyxEvent(event) {
     if (type === 'call.hangup') {
       await tx.query("UPDATE call_legs SET status='completed' WHERE sid=$1", [leg.sid]);
       const remaining = (await tx.query("SELECT * FROM call_legs WHERE call_sid=$1 AND purpose='agent' AND generation=$2 AND status<>'completed'", [root, s.generation])).rows;
-      if (!customer && ['ringing','transferring'].includes(s.phase) && !remaining.length) await voicemail();
+      if (!customer && ['ringing','transferring'].includes(s.phase) && !remaining.length) {
+        const fallback = s.phase === 'ringing' ? await fallbackTargets(root, tx) : null;
+        const targets = (fallback?.targets || []).filter(id => config.auth.agents.some(a => a.identity === id && a.telnyxSipUsername && a.role !== 'viewer'));
+        if (targets.length) {
+          s.generation++; s.timeout = fallback.timeout; s.agent = null;
+          for (const identity of targets) await dial(root, 'agent', sipDestination(identity), identity, s.generation, tx, s.timeout);
+        } else await voicemail();
+      }
       else if (customer || (p.call_control_id === s.agent && !['transferring','ringing'].includes(s.phase))) {
         const others = (await tx.query("SELECT * FROM call_legs WHERE call_sid=$1 AND status<>'completed'", [root])).rows;
         for (const other of others) await hangup(other.control_id, `end:${other.sid}`);
@@ -223,7 +234,7 @@ export async function handleTelnyxEvent(event) {
 
 export async function startTelnyxMedia({ root }) {
   const call = await loadCall(root);
-  if (!call || call.ended_at || (!config.coachingEnabled && !config.recapEnabled)) return;
+  if (!call || call.ended_at || (!config.coachingEnabled && !config.recapEnabled && !config.experience.enabled)) return;
   const url = new URL(webhookUrl('/voice/media').replace(/^https:/, 'wss:'));
   url.search = new URLSearchParams({ call: root, ticket: streamTicket(root) }).toString();
   try {
@@ -239,6 +250,8 @@ export async function transferTelnyx(call, identity, token) {
     const current = (await tx.query('SELECT * FROM calls WHERE twilio_call_sid=$1 FOR UPDATE', [call.twilio_call_sid])).rows[0];
     const receipt = await tx.query('INSERT INTO service_receipts(receipt_key) VALUES($1) ON CONFLICT DO NOTHING RETURNING receipt_key', [`telnyx-transfer:${call.twilio_call_sid}:${token}`]);
     if (!receipt.rows.length) throw Object.assign(new Error('Transfer already requested; inspect call before retrying'), { status: 409 });
+    await tx.query('SELECT pg_advisory_xact_lock(7170701)');
+    if (collaborationHub.busy(identity)) throw Object.assign(new Error('Teammate is on an internal call'), { status: 409 });
     if (current.provider_state.phase !== 'active') throw Object.assign(new Error('Call is not ready to transfer'), { status: 409 });
     const s = current.provider_state;
     const generation = (s.generation || 0) + 1;

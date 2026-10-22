@@ -15,6 +15,7 @@ import { publishToAgent } from './bus.js';
 import { callPayload, isSharedNumber, loadCall } from '../services/call-state.js';
 import { schedulePostCall } from '../services/post-call.js';
 import { matchCallLead } from '../services/lead-matching.js';
+import { enqueueJob } from '../jobs/queue.js';
 
 export function resolveSpeaker(direction, track) {
   const callerIsAgent = direction === 'outbound';
@@ -84,6 +85,7 @@ export async function onUtterance(callSid, track, text, at = Date.now()) {
 export async function onCallComplete(callSid) {
   const call = await loadCall(callSid);
   if (!call) throw new Error('Call not found for recap');
+  if (config.experience.enabled && call.ended_at) await enqueueJob('experience', `experience:${callSid}`, { callSid }, { refresh: true });
   const segments = (await db.query(`SELECT speaker,text FROM transcript_segments WHERE call_sid=$1
     ORDER BY spoken_at,seq`, [callSid])).rows;
   const full = segments.map(s => `${s.speaker === 'agent' ? 'Agent' : 'Customer'}: ${s.text}`).join('\n');

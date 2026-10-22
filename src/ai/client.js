@@ -65,7 +65,7 @@ export function modelId(bare) {
  *   - anything else (coaching_cues)    → coaching backend (local-first)
  */
 export function backendForSchema(schemaName) {
-  if (schemaName === "call_recap" || schemaName === "lead_extraction") return recapBackend;
+  if (['call_recap','lead_extraction','call_experience'].includes(schemaName)) return recapBackend;
   if (String(schemaName || "").startsWith("automation")) return automationBackend;
   return coachingBackend;
 }
