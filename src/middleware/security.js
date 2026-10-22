@@ -14,7 +14,7 @@ export function securityHeaders(_req, res, next) {
   res.setHeader("X-XSS-Protection", "0"); // modern browsers: rely on CSP, disable legacy auditor
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  res.setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=(self), payment=()");
+  res.setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=(self), display-capture=(self), payment=()");
   res.setHeader("Content-Security-Policy", config.security.csp);
   if (HTTPS) {
     res.setHeader("Strict-Transport-Security", `max-age=${config.security.hstsMaxAge}; includeSubDomains`);

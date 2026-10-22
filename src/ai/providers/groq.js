@@ -1,5 +1,6 @@
 import { config } from "../../config.js";
 import { rulesStructuredCompletion } from "./rules.js";
+import { experienceSchema, validExperience } from '../experience-schema.js';
 
 /**
  * Groq provider (OpenAI-compatible chat completions). Per-task model selection:
@@ -116,6 +117,7 @@ function parseJson(raw) {
 }
 
 function validateShape(value, schemaName) {
+  if (schemaName === 'call_experience') return validExperience(value);
   if (!value || typeof value !== "object") return false;
   if (schemaName === "call_recap") {
     return (
@@ -142,6 +144,7 @@ function validateShape(value, schemaName) {
 }
 
 function schemaHint(schemaName) {
+  if (schemaName === 'call_experience') return JSON.stringify(experienceSchema);
   if (schemaName === "call_recap") {
     return JSON.stringify(
       {

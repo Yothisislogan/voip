@@ -55,6 +55,16 @@ export const config = {
   defaultAgentIdentity: process.env.DEFAULT_AGENT_IDENTITY || "agent",
   databaseUrl: process.env.DATABASE_URL || null,
 
+  collaboration: {
+    enabled: process.env.COLLABORATION_ENABLED === 'true',
+    // Credentials use the coturn REST convention; the shared secret stays on the server.
+    stunUrls: (process.env.RTC_STUN_URLS || '').split(',').map(s => s.trim()).filter(Boolean),
+    turnUrls: (process.env.RTC_TURN_URLS || '').split(',').map(s => s.trim()).filter(Boolean),
+    turnSecret: process.env.RTC_TURN_SECRET || '',
+    relayOnly: process.env.RTC_RELAY_ONLY === 'true',
+  },
+  experience: { enabled: process.env.CALL_EXPERIENCE_ENABLED === 'true' },
+
   transcription: {
     provider: (process.env.TRANSCRIPTION_PROVIDER || (process.env.VOICE_PROVIDER === 'telnyx' ? 'assemblyai' : 'twilio')).toLowerCase(),
     apiKey: process.env.ASSEMBLYAI_API_KEY || null,
@@ -157,6 +167,7 @@ export const config = {
   },
 
   voice: {
+    tagRoutingEnabled: process.env.TAG_ROUTING_ENABLED === 'true',
     // Shared lead-vendor caller IDs must never become a customer's identity.
     sharedSourceNumbers: (process.env.SHARED_SOURCE_NUMBERS || '+16692793623').split(',').map(s => s.trim()),
     routing: parseRouting(process.env.VOICE_ROUTING_JSON),

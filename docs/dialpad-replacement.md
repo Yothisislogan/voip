@@ -1,6 +1,6 @@
 # Dialpad replacement scope and release gates
 
-Reviewed 2026-10-03. This is the capability ledger for the voice-service branch.
+Reviewed 2026-10-22. This is the capability ledger for the voice-service branch.
 “Implemented” means there is executable code in this repository; it does not
 mean a production provider account has passed acceptance testing. No phone
 numbers have been moved, production services deployed, or subscriptions canceled
@@ -77,7 +77,8 @@ controls. “Partial” rows describe their exact supported scope.
 | Multi-level IVR / visual call-flow editor | Planned | Versioned route graph, DTMF timeout/retry, safe publish and rollback |
 | Per-number/per-department routing | Planned | Current route config is global |
 | ACD waiting queue / hold announcements | Planned | Durable ordered queue, agent acceptance, max wait, overflow and abandonment |
-| Skills-based / priority routing | Planned | Skill inventory, eligibility, priorities, starvation protection |
+| Tag-based preferred-agent routing | Implemented behind a flag | Caller tags, preferred ring then normal team fallback; real-call acceptance pending. See collaboration-pilot.md |
+| Skills-based queue routing | Planned | Skill inventory, queue eligibility and starvation protection |
 | Queue callback and virtual hold | Planned | Consent, callback scheduling, cancellation, reserved capacity, retries |
 | Supervisory listen / whisper / barge | Planned | Conference architecture, explicit privilege model and audit events |
 | Supervisor wallboards and live service levels | Partial: basic 24-hour operations summary | Queue-based SLA, occupancy, abandoned-wait metrics and interval reporting |
@@ -108,8 +109,10 @@ controls. “Partial” rows describe their exact supported scope.
 | WiTnext event delivery | Implemented | Provision identity/secret, verify actual intake merge behavior and account ownership |
 | Dialpad coexistence/imported events | Implemented normalization and transcript fetch | Signed subscription setup, API permissions, multiple legs and staged recap payloads on real events |
 | CRM marketplaces (Salesforce, HubSpot, Zendesk, etc.) | Planned | Dedicated adapters, field ownership, object mapping and permission scopes |
-| Video meetings / screen share | Planned | No video transport or meeting service in this repository |
-| Team chat / channels | Planned | No internal collaboration messaging implementation |
+| Browser screen/tab share | Implemented behind a flag | One approved guest via expiring link; TURN/HTTPS and real-browser acceptance pending |
+| Video meetings | Planned | No camera meetings or conferencing |
+| Private teammate chat / internal audio calls | Implemented behind a flag | Stored 1:1 messages and browser voice; one app replica; live acceptance pending |
+| Group chat / channels | Planned | No group conversations |
 | Fax | Planned | Provider, number assignment, file delivery and retention |
 | Analytics exports / scheduled reports | Planned | Current operations totals are diagnostic, not billing-grade analytics |
 
@@ -186,3 +189,12 @@ guide the coexistence adapter. Twilio's [Voice SDK Device API](https://www.twili
 [Transcription verb](https://www.twilio.com/docs/voice/twiml/transcription)
 guide browser and webhook behavior. This ledger describes our implementation
 and acceptance requirements; it is not a reproduction of a vendor entitlement matrix.
+
+## Collaboration and experience pilot additions
+
+Browser screen/tab sharing with approved, expiring guest links; private teammate
+messages and internal browser audio calls; caller tag priority routing; and
+transcript-based CSAT/recommendation estimates are implemented behind default-off
+flags. See [collaboration-pilot.md](collaboration-pilot.md) for setup, scope,
+privacy boundaries and deferred live acceptance. They are not certified Dialpad
+feature parity or measured customer NPS.

@@ -7,7 +7,8 @@ import { doScreenPop, onUtterance, resolveSpeaker, restoreSession } from '../rea
 import { runTracked } from '../jobs/deadletter.js';
 import { enqueueJob } from '../jobs/queue.js';
 import { createCall, applyStatus, loadCall, persistUtterance } from '../services/call-state.js';
-import { selectTargets } from '../services/routing.js';
+import { selectTargets, fallbackTargets } from '../services/routing.js';
+import { collaborationHub } from '../realtime/collaboration.js';
 import { normalizePhone } from '../util/phone.js';
 import { asyncRoute } from '../util/async-route.js';
 import { publishToAgent } from '../realtime/bus.js';
@@ -31,7 +32,7 @@ async function queueScreenPop(callSid) {
   else runTracked('screenPop', { callSid }, () => doScreenPop(callSid));
 }
 async function recordDisclosure(sid) {
-  if (!db.enabled || (!config.voice.recordingEnabled && !config.coachingEnabled && !config.recapEnabled)) return;
+  if (!db.enabled || (!config.voice.recordingEnabled && !config.coachingEnabled && !config.recapEnabled && !config.experience.enabled)) return;
   await db.query(`INSERT INTO consent_events(call_sid,kind,state,method)
     SELECT $1,'disclosure','disclosed','ivr_disclosure'
     WHERE NOT EXISTS(SELECT 1 FROM consent_events WHERE call_sid=$1 AND kind='disclosure')`, [sid]);
@@ -55,7 +56,7 @@ voiceRouter.post('/voice/outbound', asyncRoute(async (req, res) => {
   const to = validDestination(req.body.To);
   const identity = identityFromClient(req.body.From);
   const allowed = config.auth.agents.some(a => a.identity === identity && a.role !== 'viewer');
-  if (!to || !identity || (config.auth.required && !allowed)) {
+  if (!to || !identity || collaborationHub.busy(identity) || (config.auth.required && !allowed)) {
     twiml.say('This destination or calling account is not enabled.'); twiml.hangup();
     return sendXml(res, twiml);
   }
@@ -74,7 +75,7 @@ voiceRouter.post('/voice/outbound', asyncRoute(async (req, res) => {
 
 voiceRouter.post('/voice/disclosure', asyncRoute(async (req, res) => {
   const twiml = new VoiceResponse();
-  if (config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled) twiml.say(DISCLOSURE);
+  if (config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled || config.experience.enabled) twiml.say(DISCLOSURE);
   await recordDisclosure(req.query.parent || req.body.ParentCallSid || req.body.CallSid);
   sendXml(res, twiml);
 }));
@@ -82,12 +83,12 @@ voiceRouter.post('/voice/disclosure', asyncRoute(async (req, res) => {
 voiceRouter.post('/voice/inbound', asyncRoute(async (req, res) => {
   const { CallSid: callSid, From: from, To: to } = req.body;
   const twiml = new VoiceResponse();
-  const route = await selectTargets(callSid);
+  const route = await selectTargets(callSid, new Date(), { from });
   await createCall({ callSid, direction: 'inbound', from, to,
     identity: route.targets.length === 1 ? route.targets[0] : null, targets: route.targets });
   startSession(callSid, { identity: route.targets.length === 1 ? route.targets[0] : null,
     customerNumber: from, direction: 'inbound', from, to });
-  twiml.say(`Thank you for calling We Insure Things. ${config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled ? DISCLOSURE : ''}`);
+  twiml.say(`Thank you for calling We Insure Things. ${config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled || config.experience.enabled ? DISCLOSURE : ''}`);
   startTranscription(twiml, callSid);
   if (route.targets.length) {
     const dial = twiml.dial({ callerId: from, timeout: route.timeout, answerOnBridge: true,
@@ -100,7 +101,7 @@ voiceRouter.post('/voice/inbound', asyncRoute(async (req, res) => {
   } else voicemail(twiml);
   if (db.enabled) {
     await db.query(`UPDATE calls SET is_voicemail=$2,consent_state=$3,consent_at=now() WHERE twilio_call_sid=$1`,
-      [callSid, !route.targets.length, config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled ? 'disclosed' : 'unknown']);
+      [callSid, !route.targets.length, config.voice.recordingEnabled || config.coachingEnabled || config.recapEnabled || config.experience.enabled ? 'disclosed' : 'unknown']);
   }
   await recordDisclosure(callSid);
   await queueScreenPop(callSid);
@@ -115,7 +116,35 @@ voiceRouter.post('/voice/dial-status', asyncRoute(async (req, res) => {
   if (req.body.DialCallStatus === 'completed' || req.body.DialCallStatus === 'answered') {
     await applyStatus({ CallSid: req.body.CallSid, CallStatus: 'completed', CallDuration: req.body.DialCallDuration }, { terminal: true });
   } else {
-    if (db.enabled) await db.query('UPDATE calls SET is_voicemail=true WHERE twilio_call_sid=$1', [req.body.CallSid]);
+    if (db.enabled) {
+      // Persist the TwiML per ring stage: provider retries must not advance a
+      // preferred attempt twice or send a still-ringing fallback to voicemail.
+      const xml = await db.transaction(async tx => {
+        const current = (await tx.query('SELECT * FROM calls WHERE twilio_call_sid=$1 FOR UPDATE', [req.body.CallSid])).rows[0];
+        const stage = req.query.stage === 'fallback' ? 'fallback' : 'initial';
+        const cached = current?.routing_plan?.twilioResponses?.[stage];
+        if (cached) return cached;
+        if (!current || current.ended_at) return twiml.toString();
+        const fallback = stage === 'initial' ? await fallbackTargets(req.body.CallSid, tx) : null;
+        if (fallback?.targets.length) {
+          const dial = twiml.dial({ callerId: current.from_e164, timeout: fallback.timeout, answerOnBridge: true,
+            action: webhookUrl('/voice/dial-status?stage=fallback'), method: 'POST', ...recordingOptions() });
+          for (const identity of fallback.targets) {
+            const target = dial.client({ statusCallback: statusUrl(req.body.CallSid, identity), statusCallbackEvent: STATUS_EVENTS, statusCallbackMethod: 'POST' });
+            target.identity(identity); target.parameter({ name: 'rootCallSid', value: req.body.CallSid });
+          }
+        } else {
+          await tx.query('UPDATE calls SET is_voicemail=true WHERE twilio_call_sid=$1', [req.body.CallSid]);
+          voicemail(twiml);
+        }
+        const result = twiml.toString();
+        await tx.query(`UPDATE calls SET routing_plan=jsonb_set(routing_plan,'{twilioResponses}',
+          coalesce(routing_plan->'twilioResponses','{}') || $2::jsonb) WHERE twilio_call_sid=$1`,
+        [req.body.CallSid, JSON.stringify({ [stage]: result })]);
+        return result;
+      });
+      return res.type('text/xml').send(xml);
+    }
     voicemail(twiml);
   }
   sendXml(res, twiml);

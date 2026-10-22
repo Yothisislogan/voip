@@ -30,7 +30,7 @@ export function attachAgentWss(server) {
     }
     if (pathname !== "/ws/agent") {
       // The separately authenticated Twilio Media Streams upgrade owns this path.
-      if (pathname === '/voice/media') return;
+      if (['/voice/media','/ws/collaboration','/ws/share'].includes(pathname)) return;
       socket.destroy();
       return;
     }

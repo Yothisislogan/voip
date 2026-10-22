@@ -28,10 +28,14 @@ async function main() {
   const c = new pg.Client({ connectionString: config.databaseUrl });
   await c.connect();
   try {
+    if (messageDays > 0) await c.query(`DELETE FROM office_messages WHERE created_at<now()-$1*interval '1 day'`, [messageDays]);
     if (messageDays > 0) await c.query(`DELETE FROM conversation_messages WHERE created_at<now()-$1*interval '1 day'`, [messageDays]);
     if (jobDays > 0) await c.query(`UPDATE service_jobs SET payload='{}'::jsonb WHERE state='done'
       AND updated_at<now()-$1*interval '1 day'`, [jobDays]);
     if (transcriptDays > 0) {
+      // Assessment reasons/quotes can repeat transcript PII. Expire them with it.
+      await c.query(`DELETE FROM call_experience e USING calls c WHERE e.call_sid=c.twilio_call_sid
+        AND coalesce(c.ended_at,c.created_at)<now()-$1*interval '1 day'`, [transcriptDays]);
       const r = await c.query(
         `DELETE FROM transcript_segments WHERE spoken_at < now() - ($1 || ' days')::interval`,
         [String(transcriptDays)]

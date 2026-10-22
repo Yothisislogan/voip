@@ -30,8 +30,19 @@ export function validateEnv({ exitOnFatal = true } = {}) {
     if (config.voiceProvider === 'twilio' && (!config.twilio.accountSid || !config.twilio.authToken)) fatal.push('Twilio account SID and auth token are required for signed Media Streams.');
     if (!['wss://streaming.assemblyai.com/v3/ws', 'wss://streaming.us.assemblyai.com/v3/ws', 'wss://streaming.eu.assemblyai.com/v3/ws'].includes(config.transcription.endpoint)) fatal.push('ASSEMBLYAI_STREAMING_URL must be an official AssemblyAI v3 endpoint.');
     if (!Number.isInteger(config.transcription.maxCalls) || config.transcription.maxCalls < 1 || config.transcription.maxCalls > 100) fatal.push('ASSEMBLYAI_MAX_CALLS must be an integer from 1 to 100.');
-    if (!config.coachingEnabled && !config.recapEnabled) warn.push('Both coaching and recap are disabled: transcription will not start.');
+    if (!config.coachingEnabled && !config.recapEnabled && !config.experience.enabled) warn.push('Both coaching and recap are disabled: transcription will not start.');
   }
+  if (config.collaboration.enabled) {
+    const rtc = config.collaboration;
+    if (rtc.stunUrls.some(url => !/^stuns?:[^\s/@]+(?::\d+)?$/.test(url))) fatal.push('RTC_STUN_URLS must contain STUN URLs without credentials.');
+    if (rtc.turnUrls.some(url => !/^turns?:[^\s/@?]+(?:\?transport=(udp|tcp))?$/.test(url))) fatal.push('RTC_TURN_URLS must contain TURN URLs without embedded credentials.');
+    if (Boolean(rtc.turnUrls.length) !== Boolean(rtc.turnSecret)) fatal.push('Configure both RTC_TURN_URLS and RTC_TURN_SECRET.');
+    if (rtc.turnSecret && rtc.turnSecret.length < 32) fatal.push('RTC_TURN_SECRET must contain at least 32 characters.');
+    if (rtc.relayOnly && !rtc.turnUrls.length) fatal.push('RTC_RELAY_ONLY requires a TURN relay.');
+    if (!rtc.turnUrls.length) warn.push('No TURN relay configured: browser screen sharing and internal calls may fail across networks.');
+    if (!config.databaseUrl) fatal.push('Collaboration requires DATABASE_URL for private messages.');
+  }
+  if (config.experience.enabled && config.llm.recapBackend === 'rules') warn.push('Call experience needs an LLM recap backend; the rules backend cannot estimate satisfaction.');
   fatal.push(...validateRouting(config.voice.routing));
   if (isProd && !config.databaseUrl) fatal.push('DATABASE_URL is required for durable call records and delivery.');
   if (isProd && (config.voiceProvider === 'twilio' || config.messaging.enabled) && !process.env.TWILIO_AUTH_TOKEN) fatal.push('TWILIO_AUTH_TOKEN is required to authenticate provider webhooks.');
