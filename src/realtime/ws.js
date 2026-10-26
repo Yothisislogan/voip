@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import { subscribeAgent } from "./bus.js";
 import { authenticateUpgrade } from "../auth/middleware.js";
 import { config } from '../config.js';
+import { trackWorkspace } from './workspace-presence.js';
 
 /**
  * WebSocket channel that pushes screen-pop / coaching / recap events to the
@@ -54,6 +55,10 @@ export function attachAgentWss(server) {
   wss.on("connection", (ws, req) => {
     const identity = req._agentIdentity;
     ws.authRequest = req;
+    const presence = trackWorkspace(identity, ws, () => {
+      const current = authenticateUpgrade(req);
+      return current?.identity === identity && current.role !== 'viewer';
+    });
 
     const unsubscribe = subscribeAgent(identity, (event) => {
       if (authenticateUpgrade(req)?.identity !== identity) { ws.close(1008, 'Session expired'); return; }
@@ -64,9 +69,9 @@ export function attachAgentWss(server) {
 
     // Heartbeat: drop dead connections so we don't leak subscriptions.
     ws.isAlive = true;
-    ws.on("pong", () => (ws.isAlive = true));
-    ws.on("close", unsubscribe);
-    ws.on("error", unsubscribe);
+    ws.on("pong", () => { ws.isAlive = true; presence.touch(); });
+    ws.on("close", () => { unsubscribe(); presence.close(); });
+    ws.on("error", () => { unsubscribe(); presence.close(); });
   });
 
   const heartbeat = setInterval(() => {

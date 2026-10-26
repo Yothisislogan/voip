@@ -2,6 +2,7 @@ import { db } from '../db.js';
 import { config } from '../config.js';
 import { callerPhone, chooseTagRule } from './tag-routing.js';
 import { collaborationHub } from '../realtime/collaboration.js';
+import { getAgentAvailability } from './agent-availability.js';
 
 export function validateRouting(route) {
   if (!route) return [];
@@ -47,7 +48,10 @@ async function availableTargets(tx, identities, exclude = []) {
     AND NOT(identity=ANY($2::text[])) AND status='available' AND heartbeat_at>now()-interval '75 seconds'
     AND (reserved_until IS NULL OR reserved_until<now())
     AND NOT EXISTS(SELECT 1 FROM calls c WHERE c.agent_identity=agent_presence.identity AND c.status='in_progress')`, [identities, exclude]);
-  return identities.map(id => rows.find(a => a.identity === id)).filter(a => a && !collaborationHub.busy(a.identity));
+  const ready = config.ringba.enabled
+    ? new Set((await getAgentAvailability({ identities, connection: tx })).filter(a => a.available).map(a => a.identity)) : null;
+  return identities.map(id => rows.find(a => a.identity === id))
+    .filter(a => a && !collaborationHub.busy(a.identity) && (!ready || ready.has(a.identity)));
 }
 function normalTargets(rows, route) {
   const sorted = orderAgents(rows, route?.strategy);
@@ -60,7 +64,7 @@ async function reserve(tx, callSid, targets, timeout) {
 
 export async function selectTargets(callSid, now = new Date(), { from } = {}) {
   const route = config.voice.routing;
-  if (!route && !config.voice.tagRoutingEnabled && !config.collaboration.enabled) return { targets: collaborationHub.busy(config.defaultAgentIdentity) ? [] : [config.defaultAgentIdentity], reason: 'default', timeout: 20 };
+  if (!route && !config.voice.tagRoutingEnabled && !config.collaboration.enabled && !config.ringba.enabled) return { targets: collaborationHub.busy(config.defaultAgentIdentity) ? [] : [config.defaultAgentIdentity], reason: 'default', timeout: 20 };
   if (route && validateRouting(route).length) throw new Error('Invalid voice routing configuration');
   if (!isOpen(route, now)) return { targets: [], reason: 'closed', timeout: 20 };
   if (!db.enabled) return { targets: [], reason: 'unavailable', timeout: 20 };
