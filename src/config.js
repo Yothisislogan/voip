@@ -55,6 +55,12 @@ export const config = {
   defaultAgentIdentity: process.env.DEFAULT_AGENT_IDENTITY || "agent",
   databaseUrl: process.env.DATABASE_URL || null,
 
+  ringba: {
+    enabled: process.env.RINGBA_AVAILABILITY_ENABLED === 'true',
+    token: process.env.RINGBA_AVAILABILITY_TOKEN || '',
+    campaigns: parseRouting(process.env.RINGBA_AVAILABILITY_CAMPAIGNS_JSON),
+    requestsPerMinute: Number(process.env.RINGBA_AVAILABILITY_RATE_PER_MINUTE || 600),
+  },
   collaboration: {
     enabled: process.env.COLLABORATION_ENABLED === 'true',
     // Credentials use the coturn REST convention; the shared secret stays on the server.

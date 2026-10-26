@@ -20,6 +20,7 @@ import { telnyxReady, recordingDownload } from '../providers/telnyx.js';
 import { startTelnyxOutbound, transferTelnyx, cancelTelnyx } from '../services/telnyx-voice.js';
 import { validDestination } from './voice.js';
 import { canAccessCall } from '../auth/call-access.js';
+import { getAgentAvailability } from '../services/agent-availability.js';
 
 export const phoneRouter = Router();
 const DISPOSITIONS = ['quote_requested','follow_up','callback','sale','not_interested','wrong_number','spam','other'];
@@ -49,6 +50,8 @@ phoneRouter.use('/api/phone', requireAuth, csrfProtect, (_req, res, next) => {
 phoneRouter.get('/api/phone/config', (req, res) => res.json({
   identity: req.agent.identity, role: req.agent.role,
   provider: config.voiceProvider,
+  agentStatusEnabled: true,
+  ringbaAvailabilityEnabled: config.ringba.enabled,
   collaborationEnabled: config.collaboration.enabled,
   experienceEnabled: config.experience.enabled,
   tagRoutingEnabled: config.voice.tagRoutingEnabled,
@@ -75,12 +78,17 @@ phoneRouter.get('/api/phone/experience-summary', requireRole('admin'), asyncRout
     unscored:row.total-row.assessed });
 }));
 
+phoneRouter.get('/api/phone/presence/team', asyncRoute(async (_req, res) => {
+  res.json({ agents: await getAgentAvailability(), generatedAt: new Date().toISOString() });
+}));
+
 phoneRouter.post('/api/phone/presence', requireRole('agent'), asyncRoute(async (req, res) => {
   const status = req.body.status;
   if (!['available','busy','away','dnd','offline','wrapup'].includes(status)) return res.status(400).json({ error: 'Invalid presence status' });
-  await db.query(`INSERT INTO agent_presence(identity,status) VALUES($1,$2)
-    ON CONFLICT(identity) DO UPDATE SET status=$2,heartbeat_at=now(),
-      idle_since=CASE WHEN $2='available' AND agent_presence.status<>'available' THEN now() ELSE agent_presence.idle_since END`, [req.agent.identity, status]);
+  if (req.body.registered !== undefined && typeof req.body.registered !== 'boolean') return res.status(400).json({ error: 'registered must be a boolean' });
+  await db.query(`INSERT INTO agent_presence(identity,status,phone_registered) VALUES($1,$2,$3)
+    ON CONFLICT(identity) DO UPDATE SET status=$2,phone_registered=$3,heartbeat_at=now(),
+      idle_since=CASE WHEN $2='available' AND agent_presence.status<>'available' THEN now() ELSE agent_presence.idle_since END`, [req.agent.identity, status, req.body.registered === true]);
   res.json({ status });
 }));
 

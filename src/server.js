@@ -24,6 +24,7 @@ import { handleTelnyxEvent, runTelnyxStart, startTelnyxMedia, expireTelnyxSetup,
 import { phoneRouter } from './routes/phone.js';
 import { tagRoutingRouter } from './routes/tag-routing.js';
 import { collaborationRouter } from './routes/collaboration.js';
+import { ringbaRouter } from './routes/ringba.js';
 import { attachCollaborationWss } from './realtime/collaboration.js';
 import { runPostCall } from './services/post-call.js';
 import { gradeCallExperience } from './services/call-experience.js';
@@ -160,6 +161,7 @@ app.use(adminRouter); // admin console API (status, DLQ, audit — admin-only in
 app.use(phoneRouter);
 app.use(tagRoutingRouter);
 app.use(collaborationRouter);
+app.use(ringbaRouter);
 app.use(messagingRouter); // agent send + conversation list (requireAuth + CSRF inside)
 
 // Webhooks. Twilio routes are signature-validated above; email intake uses an

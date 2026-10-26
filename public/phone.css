@@ -16,3 +16,10 @@
 .routing-main .panel { margin-bottom:20px; }
 .routing-rules { display:grid; gap:8px; margin:16px 0; }
 .routing-rule { display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center; padding:12px; border:1px solid #dce4ed; border-radius:8px; }
+.agent-status-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
+.agent-status { padding:12px; border:1px solid #dce4ed; border-radius:8px; display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+.availability-badge { display:inline-flex; align-items:center; gap:7px; border-radius:20px; padding:5px 10px; font-size:12px; font-weight:650; }
+.availability-badge::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; flex-shrink:0; }
+.status-green { color:#11613b; background:#dcfce7; }
+.status-yellow { color:#795200; background:#fef3c7; }
+.status-red { color:#992b2b; background:#fee2e2; }

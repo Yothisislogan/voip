@@ -45,14 +45,15 @@ if (typeof sweep.unref === "function") sweep.unref(); // don't keep the process 
  * counters per surface (auth vs api vs webhook) so a burst on one doesn't
  * starve another.
  */
-export function rateLimit(bucketName, max) {
+export function rateLimit(bucketName, max, options = {}) {
+  const duration = options.windowMs ?? windowMs;
   return (req, res, next) => {
     if (!max || max <= 0) return next(); // disabled
     const now = Date.now();
-    const key = `${bucketName}:${clientIp(req)}`;
+    const key = `${bucketName}:${options.key ? options.key(req) : clientIp(req)}`;
     let b = buckets.get(key);
     if (!b || b.resetAt <= now) {
-      b = { count: 0, resetAt: now + windowMs };
+      b = { count: 0, resetAt: now + duration };
       buckets.set(key, b);
     }
     b.count++;
@@ -62,7 +63,7 @@ export function rateLimit(bucketName, max) {
     res.setHeader("RateLimit-Reset", String(Math.ceil((b.resetAt - now) / 1000)));
     if (b.count > max) {
       res.setHeader("Retry-After", String(Math.ceil((b.resetAt - now) / 1000)));
-      return res.status(429).json({ error: "too many requests" });
+      return res.status(429).json(options.denied ? options.denied() : { error: "too many requests" });
     }
     next();
   };

@@ -142,3 +142,9 @@ The opt-in provider uses Twilio Media Streams, separate speaker tracks, durable
 final transcripts and visible interruption status. DigitalOcean/Hetzner pilot
 Compose and authenticated Render deployment are supported paths. Live calling
 still requires provider credentials, HTTPS, a pilot number and an agent login.
+
+For green/yellow/red agent status and the optional Ringba buyer availability
+endpoint, see [the Ringba availability guide](docs/ringba-agent-availability.md).
+Apply migration 0013 first. Buying availability defaults off and requires one
+application process; Ringba X account mapping and live acceptance testing remain
+required before buying traffic.

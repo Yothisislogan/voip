@@ -1,5 +1,6 @@
 import { config } from "./config.js";
 import { validateRouting } from './services/routing.js';
+import { validateRingba } from './services/ringba-availability.js';
 
 /**
  * Fail-fast configuration validation. In production (NODE_ENV=production) a fatal
@@ -43,7 +44,8 @@ export function validateEnv({ exitOnFatal = true } = {}) {
     if (!config.databaseUrl) fatal.push('Collaboration requires DATABASE_URL for private messages.');
   }
   if (config.experience.enabled && config.llm.recapBackend === 'rules') warn.push('Call experience needs an LLM recap backend; the rules backend cannot estimate satisfaction.');
-  fatal.push(...validateRouting(config.voice.routing));
+  fatal.push(...validateRouting(config.voice.routing), ...validateRingba());
+  if (config.ringba.enabled && !config.databaseUrl) fatal.push('Ringba availability requires DATABASE_URL.');
   if (isProd && !config.databaseUrl) fatal.push('DATABASE_URL is required for durable call records and delivery.');
   if (isProd && (config.voiceProvider === 'twilio' || config.messaging.enabled) && !process.env.TWILIO_AUTH_TOKEN) fatal.push('TWILIO_AUTH_TOKEN is required to authenticate provider webhooks.');
   if (config.witnext.enabled && !config.witnext.integrationId) fatal.push('WITNEXT_INTEGRATION_ID is required by the WiTnext receiver.');
